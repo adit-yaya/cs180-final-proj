@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Generative zoom</title>
+<style>
+*{box-sizing:border-box}body{margin:32px auto;padding:0 20px;max-width:960px;background:#17191c;color:#e6e7e9;font:15px system-ui}h1{font-size:24px;margin-bottom:8px}p{color:#aeb4bd;line-height:1.5}.layout{display:flex;gap:24px;align-items:flex-start}canvas{width:100%;max-width:512px;background:#24282e;cursor:crosshair;touch-action:none}main{width:512px;max-width:100%}aside{flex:1;min-width:230px}label{display:block;margin:12px 0}input,select,textarea,button{font:inherit}textarea,select{width:100%;padding:8px;background:#252a31;color:inherit;border:1px solid #454d58;border-radius:4px}input[type=number]{width:78px;margin-left:8px}input[type=range]{width:100%}button{padding:9px 16px;margin:8px 5px 0 0;cursor:pointer}button:disabled{cursor:wait;opacity:.5}#status{min-height:44px;white-space:pre-wrap}small{color:#aeb4bd}#compare{margin-top:12px} @media(max-width:760px){.layout{display:block}aside{max-width:512px}}
+</style>
+</head>
+<body>
+<h1>Generative zoom</h1>
+<p>Load an image. Click a point to zoom 2× and generate a center patch.</p>
+<div class="layout"><main>
+<canvas id="canvas" width="1024" height="1024" aria-label="Image and selected zoom region"></canvas>
+<div id="compare"><label>View <select id="view"><option value="image">Blended result (next zoom starts here)</option><option value="raw">Raw generation</option><option value="baseline">Lanczos crop baseline</option></select></label></div>
+<p id="status" role="status">Load an image to begin. Images are center-cropped to a square.</p>
+</main><aside>
+<label>Starting image <input id="upload" type="file" accept="image/*"></label>
+<label>Prompt starting point <select id="preset"><option value="">Custom</option><option value="natural">Living ecosystem</option><option value="architecture">Nested architecture</option><option value="surreal">World within a world</option><option value="material">Material microstructure</option></select></label>
+<label>Prompt (reused at every step)<textarea id="prompt" rows="4">An intricate living ecosystem, branching moss, tiny fern fronds, mineral grains and water droplets, irregular organic structures at many scales, crisp detail throughout, natural diffuse light</textarea></label>
+<label>Backend <select id="backend"><option value="diffusion">Diffusion · SD-Turbo</option><option value="z-image">Z-Image-Turbo · 1024×1024</option><option value="upscale">Lanczos only · no generation</option></select></label>
+<label>Refinement steps
+<select id="refinementSteps">
+<option value="1">1 step</option>
+<option value="2">2 steps</option>
+<option value="3" selected>3 steps</option>
+<option value="4">4 steps</option>
+</select>
+</label>
+<label>Pre-noise sharpening <input id="sharpen" type="number" min="0" max="3" step="0.25" value="1.5"></label>
+<small>Unsharp mask before editing. Set 0 to disable; strong sharpening can create halos.</small>
+<label>Border width (px) <input id="feather" type="number" min="0" max="128" value="32"></label>
+<small>Only the border blends. The generated interior stays unchanged. Set 0 for a hard paste.</small>
+<label>Seed <input id="seed" type="number" min="0" max="2147483647" value="42"></label>
+
+</aside></div>
+<script src="/static/app.js"></script>
+</body></html>
