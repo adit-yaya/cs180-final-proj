@@ -17,7 +17,15 @@
 </main><aside>
 <label>Starting image <input id="upload" type="file" accept="image/*"></label>
 <label>Prompt starting point <select id="preset"><option value="">Custom</option><option value="natural">Living ecosystem</option><option value="architecture">Nested architecture</option><option value="surreal">World within a world</option><option value="material">Material microstructure</option></select></label>
-<label>Prompt (reused at every step)<textarea id="prompt" rows="4">An intricate living ecosystem, branching moss, tiny fern fronds, mineral grains and water droplets, irregular organic structures at many scales, crisp detail throughout, natural diffuse light</textarea></label>
+<label>Starting prompt / story direction<textarea id="prompt" rows="4">An intricate living ecosystem, branching moss, tiny fern fronds, mineral grains and water droplets, irregular organic structures at many scales, crisp detail throughout, natural diffuse light</textarea></label>
+<label><input id="evolvePrompt" type="checkbox" checked> Evolve prompt each zoom</label>
+<label>Story variation <select id="variation"><option value="gentle">Gentle</option><option value="medium" selected>Medium</option><option value="surprising">Surprising</option></select></label>
+<button id="resetStory" type="button">Restart story</button>
+<div id="storyPanel" aria-live="polite" style="margin:12px 0;padding:12px;border:1px solid #454d58;border-radius:4px">
+<small id="storyHeading">Story starts with your next zoom.</small>
+<p id="storyBeat" style="margin:8px 0"></p>
+<details id="promptDetails"><summary>Prompt used for the last image</summary><p id="usedPrompt" style="overflow-wrap:anywhere;margin:8px 0"></p></details>
+</div>
 <label>Backend <select id="backend"><option value="diffusion">Diffusion · SD-Turbo</option><option value="z-image">Z-Image-Turbo · 1024×1024</option><option value="upscale">Lanczos only · no generation</option></select></label>
 <label>Refinement steps
 <select id="refinementSteps">

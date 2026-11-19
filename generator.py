@@ -37,7 +37,7 @@ class Generator:
             device = os.environ.get('ZOOM_DEVICE', 'auto')
             if device == 'auto':
                 device = 'cuda' if torch.cuda.is_available() else ('mps' if torch.backends.mps.is_available() else 'cpu')
-            dtype = torch.float16 if device == 'cuda' else torch.float32
+            dtype = torch.float16 if device in ('cuda', 'mps') else torch.float32
             kwargs = {'torch_dtype': dtype}
             if is_z_image and device != 'cpu':
                 kwargs['torch_dtype'] = torch.bfloat16
@@ -65,6 +65,9 @@ class Generator:
                            callback_on_step_end=record_step)
         if getattr(result, 'nsfw_content_detected', None) and any(result.nsfw_content_detected):
             raise ValueError('The model filtered this result; try a different crop or prompt.')
+        # Release unused temporary Metal allocations before the next local LLM call.
+        if self.pipe.device.type == 'mps':
+            torch.mps.empty_cache()
         return result.images[0].convert('RGB'), {
             'model': model_id, 'load_seconds': load_time,
             'denoising_steps': len(used_timesteps),

@@ -1,26 +1,73 @@
 # Minimal generative zoom
 
-## Setup / launch (cs180 Conda environment)
+## Setup / launch
+
+On this Mac, the project is in `~/Desktop/cs180-final-proj` and dependencies are
+installed in its local `.venv` (Python 3.12). No Conda activation is needed.
 
 ```sh
-conda activate cs180
-cd ~/Documents/cs180/final_proj
-python -m pip install -r requirements-model.txt
-python app.py
+cd ~/Desktop/cs180-final-proj
+./run.sh
 ```
 
-Or `./run.sh` after installation; this explicitly uses ~/miniconda3/envs/cs180/bin/python.
-Restart the server and reload http://127.0.0.1:8000 after changes. This environment
-could download dependencies but could not write to the Conda environment; run the
-install command in Terminal. No packages in cs180 were successfully installed by
-that attempt. Imaging tests do run in cs180 using existing NumPy/Pillow.
+Open http://127.0.0.1:8000. Press Ctrl-C in Terminal to stop the server.
+Restart the server and reload the page after changes.
 
-Upload an image; click a point to generate. Prompt and seed remain fixed until
-edited. No history, cache of generated images, or disk output. Lanczos only skips
-diffusion. SD-Turbo downloads on its first diffusion request and stays in memory.
+To install on a fresh machine, create the environment first:
+
+```sh
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r requirements-model.txt
+./run.sh
+```
+
+The launcher prefers `.venv/bin/python`, falling back to `python3` if no local
+virtual environment exists. Model weights download on first use into the normal
+Hugging Face cache; GPU selection is automatic (MPS on Apple Silicon).
+
+Upload an image; click a point to generate. With **Evolve prompt each zoom**
+enabled, local Qwen3-4B writes a new prompt and short story beat before diffusion.
+The starting prompt remains the anchor; the browser retains the last three text
+beats. No image history or generated-image disk output is kept. The diffusion
+seed stays fixed until edited. Lanczos only skips both prompt writing and diffusion. SD-Turbo downloads on its first diffusion request and stays in memory.
 Direct StableDiffusionImg2ImgPipeline import avoids unrelated Qwen imports.
 ZOOM_MODEL=stabilityai/sdxl-turbo optionally selects the XL pipeline. ZOOM_DEVICE
 can be cpu, mps, or cuda; default auto-detects. GPU speed is not measured here.
+
+## Local story director
+
+Ollama must be installed and running (`ollama serve` if needed). Pull the small
+local model once:
+
+```sh
+ollama pull qwen3:4b
+```
+
+`./run.sh` starts the local Ollama service if necessary. Qwen runs on
+`http://127.0.0.1:11434`; no cloud model or API key is used. Set
+`ZOOM_PROMPT_MODEL` before launch to choose another installed Ollama model that
+supports structured output and non-thinking generation.
+
+- **Starting prompt / story direction** stays constant until you edit it.
+- **Story variation** defaults to Medium; Gentle changes less, Surprising permits
+  larger departures. A sampled creative cue encourages a distinct discovery.
+- Each step supplies the initial direction, current discovery and last three
+  discoveries. Thinking is off, token sampling uses the selected temperature, and output is limited to
+  a short story sentence plus a standalone diffusion prompt. Near-duplicate scenes
+  trigger one retry; invalid or unavailable results stop the step with an error.
+- Story context advances only after the resulting image succeeds. Uploading a
+  new image, editing the starting prompt, or pressing **Restart story** resets it.
+  Restarting the story keeps the current image. Disabling evolution uses the exact
+  fixed prompt for controlled comparisons.
+- The story panel shows the latest discovery and actual prompt used. The prompt
+  dropdown starts collapsed and closes after each successful step or story reset. The prompt writer receives text only and does not see the image or
+  clicked location; continuity is guided by text context rather than visual analysis.
+
+Prompt writing adds latency before diffusion. Its sampling is randomized independently
+of the diffusion seed, so different prompts can produce different images even with a
+fixed image seed. Both models share the Mac's memory; SD-Turbo is the tested default. Diffusion uses
+float16 on MPS/CUDA (float32 on CPU), and releases unused Metal allocations after
+each generation to leave room for the local prompt writer.
 
 ## Geometry
 
@@ -51,7 +98,9 @@ A 450ms temporal fade reveals the result; the final image has no global fade.
 
 ## Prompts and first experiments
 
-Choose a preset to populate the editable prompt; it stays the same across steps.
+Choose a preset to populate the editable starting prompt; it stays the same across steps.
+With evolution enabled, this is context for the prompt director rather than the
+exact prompt sent to diffusion.
 Presets are hypotheses to test, not demonstrated improvements. Concrete scene
 content is more useful here than instructions such as "add more detail". A fixed
 prompt encourages its named objects to recur; it cannot describe every semantic

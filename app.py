@@ -1,4 +1,4 @@
-"""Minimal stateless zoom server: no history, cache, or saved generations."""
+"""Local zoom server; the browser supplies bounded story context per request."""
 import base64
 import io
 import threading
@@ -11,12 +11,14 @@ from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field, model_validator
 from typing import Literal, Tuple
 
+from director import DirectorRequest, PromptDirector
 from generator import Generator
 from imaging import context_at, insert_center, raw_center, zoom_center, feather_patch
 
 ROOT = Path(__file__).resolve().parent
 generator = Generator()
 model_lock = threading.Lock()
+prompt_director = PromptDirector()
 
 class Request(BaseModel):
     image: str = Field(max_length=8_000_000)
@@ -91,15 +93,20 @@ class Handler(BaseHTTPRequestHandler):
         self.respond(200, (ROOT/'static'/name).read_bytes(), mime)
 
     def do_POST(self):
-        if self.path != '/api/zoom':
+        if self.path not in ('/api/zoom', '/api/director'):
             self.respond(404, b'Not found', 'text/plain')
             return
         try:
             length = int(self.headers.get('Content-Length', '0'))
             if not 0 < length <= 8_100_000:
                 raise ValueError('Invalid request size')
-            req = Request.model_validate_json(self.rfile.read(length))
-            output = zoom(req)
+            body = self.rfile.read(length)
+            if self.path == '/api/director':
+                req = DirectorRequest.model_validate_json(body)
+                output = prompt_director.next(req)
+            else:
+                req = Request.model_validate_json(body)
+                output = zoom(req)
             self.respond(200, json.dumps(output).encode(), 'application/json')
         except Exception as exc:
             status = 400 if isinstance(exc, ValueError) else 500
