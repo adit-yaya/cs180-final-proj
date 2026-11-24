@@ -1,0 +1,4 @@
+-r requirements-model.txt
+transformers>=4.57,<5
+diffusers>=0.36,<1
+bitsandbytes>=0.46,<1

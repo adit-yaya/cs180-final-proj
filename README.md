@@ -1,12 +1,22 @@
 # Minimal generative zoom
 
-## Setup / launch
+## Run in Google Colab
 
-On this Mac, the project is in `~/Desktop/cs180-final-proj` and dependencies are
-installed in its local `.venv` (Python 3.12). No Conda activation is needed.
+1. Open [Google Colab](https://colab.research.google.com/), choose **File → Upload notebook**, and select [Generative_Zoom.ipynb](Generative_Zoom.ipynb) from this project. The notebook includes the Python app, browser UI, and dependency files. You can share just the notebook with a partner.
+2. Choose **Runtime → Change runtime type**, select a GPU (start with a T4), save, and connect. Choose **Runtime → Run all**. The setup cell prints the assigned GPU, installs the dependencies, and the final code cell displays the demo.
+3. Upload a photo in the demo, enter a starting direction or choose a preset, and leave **Evolve prompt each zoom** enabled. Select **Diffusion · SD-Turbo** and click a detail in the image. The first click downloads the weights and loads both models. Later clicks reuse them.
+4. Click the result to continue. The story panel shows each discovery, and **Prompt used for the last image** shows what Qwen sent to diffusion. Use **Restart story** to clear the text history while keeping the current image.
+5. Keep the runtime connected while using the demo. When finished, choose **Runtime → Disconnect and delete runtime** to release the GPU. A fresh runtime downloads the weights again.
+
+Colab runs Qwen3-VL-4B through Transformers with 4-bit weights and runs diffusion on the same GPU. Both models download directly from Hugging Face. The hosted demo uses Colab's built-in port proxy. For a quick UI check, select **Lanczos only** and click the image. If a larger image model exhausts GPU memory, rerun **Start the demo** and select SD-Turbo. To see server output, run `print(log.read_text()[-4000:])` in a new cell.
+
+After editing the app, static assets, or requirements, run `python3 scripts/refresh_colab.py` and include the updated notebook when sharing your changes.
+
+## Run locally
+
+From the project directory on a Mac with the local environment installed, run:
 
 ```sh
-cd ~/Desktop/cs180-final-proj
 ./run.sh
 ```
 
@@ -35,7 +45,7 @@ Direct StableDiffusionImg2ImgPipeline import avoids unrelated Qwen imports.
 ZOOM_MODEL=stabilityai/sdxl-turbo optionally selects the XL pipeline. ZOOM_DEVICE
 can be cpu, mps, or cuda; default auto-detects. GPU speed is not measured here.
 
-## Local story director
+## Local story director (Ollama)
 
 Ollama must be installed and running (`ollama serve` if needed). Pull the small
 local model once:

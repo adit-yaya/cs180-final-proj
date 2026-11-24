@@ -59,6 +59,34 @@ function animate(duration, frame) {
     requestAnimationFrame(tick);
   });
 }
+async function requestScene(body) {
+  const start = performance.now();
+  const controller = new AbortController();
+  let timer;
+  async function showStage() {
+    try {
+      const response = await fetch('api/director/status', {cache: 'no-store', signal: controller.signal});
+      const {stage} = await response.json();
+      if (stage && !controller.signal.aborted) {
+        const seconds = Math.floor((performance.now() - start) / 1000);
+        $('status').textContent = `${stage} · ${seconds}s elapsed`;
+      }
+    } catch {
+      // The main request reports generation errors even when status polling fails.
+    } finally {
+      if (!controller.signal.aborted) timer = setTimeout(showStage, 3000);
+    }
+  }
+  timer = setTimeout(showStage, 1000);
+  try {
+    return await fetch('api/director', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+    });
+  } finally {
+    controller.abort();
+    clearTimeout(timer);
+  }
+}
 async function generate() {
   if (!current || busy) return;
   const source = current;
@@ -72,11 +100,10 @@ async function generate() {
     if ($('evolvePrompt').checked && payload.backend !== 'upscale') {
       if (!payload.prompt.trim()) throw new Error('Enter a starting prompt or choose a preset.');
       $('status').textContent = 'Reading the selected crop and writing the next scene…';
-      const directorResponse = await fetch('/api/director', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({image: payload.image, center: payload.center,
-          initial_prompt: payload.prompt, history: storyHistory.slice(-3),
-          step: storyStep + 1, variation: $('variation').value})
+      const directorResponse = await requestScene({
+        image: payload.image, center: payload.center,
+        initial_prompt: payload.prompt, history: storyHistory.slice(-3),
+        step: storyStep + 1, variation: $('variation').value
       });
       const directed = await directorResponse.json();
       if (!directorResponse.ok) throw new Error(typeof directed.detail === 'string' ? directed.detail : JSON.stringify(directed.detail));
@@ -84,7 +111,7 @@ async function generate() {
     }
     $('status').textContent = 'Generating the image…';
     // Keep the UI responsive while the server generates.
-    const pending = fetch('/api/zoom', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)})
+    const pending = fetch('api/zoom', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)})
       .then(async r => {const data = await r.json(); if (!r.ok) throw new Error(typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail)); return data;})
       .then(data => ({data}), error => ({error}));
     // Keep the current frame while inference runs; commit story text only after success.

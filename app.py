@@ -78,10 +78,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         files = {'/': ('index.html', 'text/html; charset=utf-8'),
                  '/static/app.js': ('app.js', 'text/javascript; charset=utf-8')}
-        if self.path not in files:
+        path = self.path.partition('?')[0]
+        if path == '/api/director/status':
+            self.respond(200, json.dumps({'stage': prompt_director.stage}).encode(), 'application/json')
+            return
+        if path not in files:
             self.respond(404, b'Not found', 'text/plain')
             return
-        name, mime = files[self.path]
+        name, mime = files[path]
         self.respond(200, (ROOT/'static'/name).read_bytes(), mime)
 
     def do_POST(self):
@@ -95,12 +99,19 @@ class Handler(BaseHTTPRequestHandler):
             body = self.rfile.read(length)
             if self.path == '/api/director':
                 req = DirectorRequest.model_validate_json(body)
-                output = prompt_director.next(req)
+                if not model_lock.acquire(blocking=False):
+                    raise ValueError('A generation is already running')
+                try:
+                    output = prompt_director.next(req)
+                finally:
+                    prompt_director.stage = None
+                    model_lock.release()
             else:
                 req = Request.model_validate_json(body)
                 output = zoom(req)
             self.respond(200, json.dumps(output).encode(), 'application/json')
         except Exception as exc:
+            print(f'{self.path} failed: {exc}', flush=True)
             status = 400 if isinstance(exc, ValueError) else 500
             self.respond(status, json.dumps({'detail': str(exc)}).encode(), 'application/json')
 
