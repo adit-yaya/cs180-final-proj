@@ -9,16 +9,16 @@ from imaging import decode_zoom_crop, feather_patch
 
 
 class ImagingTests(unittest.TestCase):
-    def test_crop_uses_one_quarter_of_frame_width_and_stays_inside_edges(self):
+    def test_crop_uses_half_of_frame_width_and_stays_inside_edges(self):
         rng = np.random.default_rng(42)
         frame = Image.fromarray(rng.integers(0, 256, (1024, 1024, 3), dtype='uint8'))
         buffer = io.BytesIO()
         frame.save(buffer, format='PNG')
         encoded = base64.b64encode(buffer.getvalue()).decode()
         for center, expected in [
-            ((0.5, 0.5), (384, 384, 640, 640)),
-            ((0, 1), (0, 768, 256, 1024)),
-            ((1, 0), (768, 0, 1024, 256)),
+            ((0.5, 0.5), (256, 256, 768, 768)),
+            ((0, 1), (0, 512, 512, 1024)),
+            ((1, 0), (512, 0, 1024, 512)),
         ]:
             with self.subTest(center=center):
                 crop, bounds = decode_zoom_crop(encoded, center)

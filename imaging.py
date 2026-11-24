@@ -18,7 +18,7 @@ def decode_zoom_crop(encoded_image, center):
         with Image.open(io.BytesIO(data)) as source:
             if source.size != (FRAME_SIZE, FRAME_SIZE):
                 raise ValueError('Expected a 1024 × 1024 input image')
-            size = source.width // 4
+            size = source.width // 2
             left, top = (
                 max(0, min(source.width - size, int(value * source.width + 0.5) - size // 2))
                 for value in center

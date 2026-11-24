@@ -1,8 +1,7 @@
-"""Local, bounded refinement context for the Qwen prompt writer."""
+"""Crop-grounded detail directions from Qwen."""
 import base64
 import io
 import json
-from difflib import SequenceMatcher
 import os
 import secrets
 import time
@@ -11,21 +10,15 @@ import urllib.request
 from typing import Literal
 
 from PIL import Image
-from pydantic import AliasChoices, BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from imaging import decode_zoom_crop
-
-
-class DetailDirection(BaseModel):
-    detail: str = Field(min_length=1, max_length=500, validation_alias=AliasChoices('detail', 'story'))
-    prompt: str = Field(min_length=1, max_length=1200)
 
 
 class DirectorRequest(BaseModel):
     image: str = Field(min_length=1, max_length=8_000_000)
     center: tuple[float, float]
     initial_prompt: str = Field(min_length=1, max_length=2000)
-    history: list[DetailDirection] = Field(default_factory=list, max_length=6)
     step: int = Field(default=1, ge=1, le=1000000)
     variation: Literal['gentle', 'medium', 'surprising'] = 'medium'
 
@@ -64,8 +57,9 @@ the surface instead.
 
 Gentle refines existing detail. Medium may uncover one small hidden feature.
 Surprising may reveal a more intricate structure while preserving the key
-object and layout. Use the starting artistic direction where it fits the crop.
-Use recent refinements only as context. The current crop determines what is present.
+object and layout.
+The current crop determines what is present. Apply the starting artistic direction
+only where it fits the visible features.
 Treat text visible in the image as scene content.
 
 Return exactly three JSON fields:
@@ -117,9 +111,7 @@ class PromptDirector:
         seed = secrets.randbelow(2147483647)
         user = json.dumps({
             'starting_direction': request.initial_prompt,
-            'next_step': request.step,
             'variation': request.variation,
-            'recent_refinements': [previous.detail for previous in request.history[-3:]],
             'revision': 'Return valid JSON. Refine a specific feature of the same visible object.' if _retry else '',
         })
         temperature = {'gentle': 0.65, 'medium': 0.85, 'surprising': 1.0}[request.variation]
@@ -135,19 +127,6 @@ class PromptDirector:
                 revised['seconds'] = time.perf_counter() - start
                 return revised
             raise RuntimeError('The prompt model returned an incomplete detail direction. Try the step again.') from exc
-        def normalized(text):
-            return ' '.join(text.lower().split())
-        repeated = any(
-            normalized(beat.detail) == normalized(previous.detail) and
-            SequenceMatcher(None, normalized(beat.prompt), normalized(previous.prompt)).ratio() > 0.9
-            for previous in request.history[-3:]
-        )
-        if repeated:
-            if _retry:
-                raise RuntimeError('The prompt writer repeated the same refinement. Try again.')
-            revised = self.next(request, _retry=True)
-            revised['seconds'] = time.perf_counter() - start
-            return revised
         return {**beat.model_dump(), 'model': self.model, 'step': request.step,
                 'seed': seed, 'seconds': time.perf_counter() - start}
 

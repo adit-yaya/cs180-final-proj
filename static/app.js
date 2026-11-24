@@ -1,9 +1,9 @@
 const $ = id => document.getElementById(id);
 const canvas = $('canvas'), ctx = canvas.getContext('2d');
 let current = null, result = null, center = [0.5, 0.5], busy = false;
-let detailHistory = [], detailStep = 0;
+let detailStep = 0;
 function resetDetails() {
-  detailHistory = []; detailStep = 0;
+  detailStep = 0;
   $('detailHeading').textContent = 'Detail direction appears after your next zoom.';
   $('detailDirection').textContent = ''; $('usedPrompt').textContent = '';
   $('cropObservation').textContent = '';
@@ -19,10 +19,6 @@ function loadImage(url) {
   return new Promise((resolve, reject) => {
     const im = new Image(); im.onload = () => resolve(im); im.onerror = () => reject(new Error('Cannot decode image')); im.src = url;
   });
-}
-function dataURL(image) {
-  const c = document.createElement('canvas'); c.width = c.height = 1024;
-  c.getContext('2d').drawImage(image, 0, 0, 1024, 1024); return c.toDataURL('image/png');
 }
 function setBusy(value) {
   busy = value;
@@ -51,13 +47,18 @@ $('view').onchange = () => draw();
 function previewZoom(source, center) {
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const size = canvas.width;
-  const cropSize = size / 4;
+  const cropSize = size / 2;
+  const previewDuration = 6000;
+  const previewLimit = 0.85;
+  const minimumRevealDuration = 1200;
+  const extraTravelDuration = 1100;
   // Match decode_zoom_crop so the pending preview and server result align.
   const [previewLeft, previewTop] = center.map(value =>
     clamp(Math.round(value * size) - cropSize / 2, 0, size - cropSize));
   let frame;
   let progress = 0;
-  let start;
+  let lastPreviewFrame;
+  let previewElapsed = 0;
   const ease = t => t * t * (3 - 2 * t);
 
   function render(left, top, width, image, opacity = 0) {
@@ -75,10 +76,11 @@ function previewZoom(source, center) {
   }
 
   function preview(now) {
-    start ??= now;
-    const elapsed = clamp((now - start) / 7000, 0, 1);
+    previewElapsed += Math.min(now - (lastPreviewFrame ?? now), 50);
+    lastPreviewFrame = now;
+    const elapsed = clamp(previewElapsed / previewDuration, 0, 1);
     // Move toward the crop while inference runs, leaving room for the reveal.
-    progress = 0.88 * (1 - (1 - elapsed) ** 3);
+    progress = previewLimit * (1 - (1 - elapsed) ** 3);
     render(previewLeft, previewTop, cropSize);
     if (elapsed < 1) frame = requestAnimationFrame(preview);
   }
@@ -91,12 +93,15 @@ function previewZoom(source, center) {
       if (reducedMotion) return;
       cancel();
       const from = progress;
-      const duration = 500 + 450 * (1 - from);
-      let revealStart;
+      const duration = minimumRevealDuration + extraTravelDuration * (1 - from);
+      let lastRevealFrame;
+      let revealElapsed = 0;
       return new Promise(resolve => {
         function reveal(now) {
-          revealStart ??= now;
-          const t = clamp((now - revealStart) / duration, 0, 1);
+          // Keep the blend visible across dropped frames or iframe throttling.
+          revealElapsed += Math.min(now - (lastRevealFrame ?? now), 50);
+          lastRevealFrame = now;
+          const t = clamp(revealElapsed / duration, 0, 1);
           const blend = ease(t);
           progress = from + (1 - from) * blend;
           render(left, top, right - left, image, blend);
@@ -140,7 +145,7 @@ async function generate() {
   if (!current || busy) return;
   const source = current;
   let nextDetail = null;
-  const payload = {image:dataURL(source), center:center, prompt:$('prompt').value,
+  const payload = {image:source.src, center:center, prompt:$('prompt').value,
     backend:$('backend').value, refinement_steps:Number($('refinementSteps').value),
     seed:Number($('seed').value), sharpen:Number($('sharpen').value), feather:Number($('feather').value)};
   setBusy(true); $('view').value = 'image';
@@ -152,7 +157,7 @@ async function generate() {
       $('status').textContent = 'Reading the selected crop and writing a detail direction…';
       const directorResponse = await requestDetail({
         image: payload.image, center: payload.center,
-        initial_prompt: payload.prompt, history: detailHistory.slice(-3),
+        initial_prompt: payload.prompt,
         step: detailStep + 1, variation: $('variation').value
       });
       const directed = await directorResponse.json();
@@ -170,8 +175,6 @@ async function generate() {
     current = image; result = {image, raw, baseline}; center = [0.5,0.5];
     if (nextDetail) {
       detailStep += 1;
-      detailHistory.push({prompt: nextDetail.prompt, detail: nextDetail.detail});
-      detailHistory = detailHistory.slice(-3);
       $('detailHeading').textContent = `Detail direction · Step ${detailStep}`;
       $('detailDirection').textContent = nextDetail.detail;
     } else {

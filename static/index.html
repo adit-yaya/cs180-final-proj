@@ -9,7 +9,7 @@
 </head>
 <body>
 <h1>Generative zoom</h1>
-<p>Load an image. Click a point to zoom 4× and refine the selected region.</p>
+<p>Load an image. Click a point to zoom 2× and refine the selected region.</p>
 <div class="layout"><main>
 <canvas id="canvas" width="1024" height="1024" aria-label="Image and selected zoom region"></canvas>
 <div id="compare"><label>View <select id="view"><option value="image">Blended result (next zoom starts here)</option><option value="raw">Raw generation</option><option value="baseline">Lanczos crop baseline</option></select></label></div>
@@ -20,7 +20,7 @@
 <label>Starting artistic direction<textarea id="prompt" rows="4">An intricate living ecosystem, branching moss, tiny fern fronds, mineral grains and water droplets, irregular organic structures at many scales, crisp detail throughout, natural diffuse light</textarea></label>
 <label><input id="evolvePrompt" type="checkbox" checked> Evolve prompt each zoom</label>
 <label>Detail variation <select id="variation"><option value="gentle">Gentle</option><option value="medium" selected>Medium</option><option value="surprising">Surprising</option></select></label>
-<button id="resetDetails" type="button">Reset detail history</button>
+<button id="resetDetails" type="button">Reset detail panel</button>
 <div id="detailPanel" aria-live="polite" style="margin:12px 0;padding:12px;border:1px solid #454d58;border-radius:4px">
 <small id="detailHeading">Detail direction appears after your next zoom.</small>
 <p id="detailDirection" style="margin:8px 0"></p>

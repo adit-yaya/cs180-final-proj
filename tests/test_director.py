@@ -8,7 +8,7 @@ from unittest.mock import patch
 from PIL import Image
 from pydantic import ValidationError
 
-from director import DirectorRequest, PromptDirector, DetailDirection
+from director import DirectorRequest, PromptDirector
 
 
 def frame():
@@ -28,7 +28,6 @@ class DirectorTests(unittest.TestCase):
     def request(self, **overrides):
         values = dict(image=frame(), center=(0.25, 0.5),
                       initial_prompt='An ancient forest of moss and ferns',
-                      history=[DetailDirection(prompt=f'forest scene {i}', detail=f'beat {i}') for i in range(6)],
                       step=7)
         values.update(overrides)
         return DirectorRequest(**values)
@@ -49,20 +48,19 @@ class DirectorTests(unittest.TestCase):
         return calls
 
     @patch('director.urllib.request.urlopen')
-    def test_local_structured_prompt_has_image_anchor_and_bounded_history(self, send):
+    def test_local_structured_prompt_uses_current_crop_and_starting_direction(self, send):
         calls = self.mock_ollama(send)
         out = PromptDirector().next(self.request())
         payload = calls[0]
         context = json.loads(payload['messages'][1]['content'])
         self.assertEqual(context['starting_direction'], self.request().initial_prompt)
-        self.assertEqual(context['recent_refinements'], ['beat 3', 'beat 4', 'beat 5'])
         self.assertEqual(context['variation'], 'medium')
         self.assertFalse(payload['think'])
         self.assertFalse(payload['stream'])
         self.assertEqual(payload['format']['required'], ['observations', 'detail', 'prompt'])
         crop = Image.open(io.BytesIO(base64.b64decode(payload['messages'][1]['images'][0])))
-        self.assertEqual(crop.size, (256, 256))
-        self.assertEqual(crop.getpixel((128, 128)), (255, 0, 0))
+        self.assertEqual(crop.size, (512, 512))
+        self.assertEqual(crop.getpixel((256, 256)), (255, 0, 0))
         self.assertEqual(out['observations'], 'A red surface fills the crop.')
 
     @patch('director.urllib.request.urlopen')
@@ -70,8 +68,8 @@ class DirectorTests(unittest.TestCase):
         beat = {'observations': 'A colored surface.', 'detail': 'A delicate texture.', 'prompt': 'Fine surface texture.'}
         calls = self.mock_ollama(send, [beat, beat])
         director = PromptDirector()
-        director.next(self.request(center=(0.25, 0.5), history=[]))
-        director.next(self.request(center=(0.75, 0.5), history=[]))
+        director.next(self.request(center=(0.25, 0.5)))
+        director.next(self.request(center=(0.75, 0.5)))
         crops = [Image.open(io.BytesIO(base64.b64decode(c['messages'][1]['images'][0]))) for c in calls]
         self.assertEqual(crops[0].getpixel((0, 0)), (255, 0, 0))
         self.assertEqual(crops[1].getpixel((0, 0)), (0, 0, 255))
@@ -87,15 +85,16 @@ class DirectorTests(unittest.TestCase):
                 np.testing.assert_array_equal(np.asarray(generate.call_args.args[0]), np.asarray(crop))
 
     @patch('director.urllib.request.urlopen')
-    def test_repeated_refinement_retries_with_same_image(self, send):
-        old = {'observations': 'A red surface.', 'detail': 'beat 5', 'prompt': 'forest scene 5'}
-        new = {'observations': 'A red surface.', 'detail': 'Amber flecks glint in the red paint.',
-               'prompt': 'A crimson painted surface with fine amber flecks and subtle hairline cracks.'}
-        calls = self.mock_ollama(send, [old, new])
-        out = PromptDirector().next(self.request())
-        self.assertEqual(out['detail'], new['detail'])
-        self.assertEqual(len(calls), 2)
-        self.assertEqual(calls[0]['messages'][1]['images'], calls[1]['messages'][1]['images'])
+    def test_legacy_history_is_ignored_even_if_detail_repeats(self, send):
+        prior = {'detail': 'Finer grain along the edge.', 'prompt': 'A red edge with finer grain.'}
+        result = {'observations': 'A red surface.', **prior}
+        calls = self.mock_ollama(send, [result])
+        out = PromptDirector().next(self.request(history=[prior]))
+        self.assertEqual(out['detail'], prior['detail'])
+        self.assertEqual(len(calls), 1)
+        context = json.loads(calls[0]['messages'][1]['content'])
+        self.assertEqual(set(context), {'starting_direction', 'variation', 'revision'})
+        self.assertNotIn(prior['detail'], json.dumps(calls[0]))
 
     @patch('director.urllib.request.urlopen')
     def test_text_only_model_is_rejected_instead_of_ignoring_image(self, send):

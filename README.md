@@ -5,7 +5,7 @@
 1. Open [Google Colab](https://colab.research.google.com/), choose **File → Upload notebook**, and select [Generative_Zoom.ipynb](Generative_Zoom.ipynb) from this project. The notebook includes the Python app, browser UI, and dependency files. You can share just the notebook with a partner.
 2. Choose **Runtime → Change runtime type**, select a GPU (start with a T4), save, and connect. Choose **Runtime → Run all**. The setup cell prints the assigned GPU, installs the dependencies, and the final code cell displays the demo.
 3. Upload a photo in the demo, enter a starting direction or choose a preset, and leave **Evolve prompt each zoom** enabled. In **Backend**, choose **Diffusion · SD-Turbo** for a T4 or **Z-Image-Turbo · 1024×1024** on an L4, A100, or another GPU with native BF16 support and enough VRAM. Click a detail in the image. The first click downloads and loads the selected models. Later clicks reuse them.
-4. Click the result to continue. The detail panel shows the latest refinement, and **Prompt used for the last image** shows what Qwen sent to diffusion. Use **Reset detail history** to clear the text history while keeping the current image.
+4. Click the result to continue. The detail panel shows the latest refinement, and **Prompt used for the last image** shows what Qwen sent to diffusion. Use **Reset detail panel** to clear the panel while keeping the current image.
 5. Keep the runtime connected while using the demo. When finished, choose **Runtime → Disconnect and delete runtime** to release the GPU. A fresh runtime downloads the weights again.
 
 Colab runs Qwen3-VL-4B through Transformers with 4-bit weights and runs diffusion on the same GPU. Both models download directly from Hugging Face. The hosted demo uses Colab's built-in port proxy. For a quick UI check, select **Lanczos only** and click the image. If a larger image model exhausts GPU memory, rerun **Start the demo** and select SD-Turbo. To see server output, run `print(log.read_text()[-4000:])` in a new cell.
@@ -38,8 +38,7 @@ Hugging Face cache; GPU selection is automatic (MPS on Apple Silicon).
 Upload an image; click a point to generate. With **Evolve prompt each zoom**
 enabled, local Qwen3-VL-4B inspects the clicked crop and writes a new prompt and short
 detail direction before diffusion.
-The starting prompt remains the anchor; the browser retains the last three detail
-directions. No image history or generated-image disk output is kept. The diffusion
+The starting prompt remains the style anchor. No image history or generated-image disk output is kept. The diffusion
 seed stays fixed until edited. Lanczos only skips both prompt writing and diffusion. SD-Turbo downloads on its first diffusion request and stays in memory.
 Direct StableDiffusionImg2ImgPipeline import avoids unrelated Qwen imports.
 ZOOM_MODEL=stabilityai/sdxl-turbo optionally selects the XL pipeline. ZOOM_DEVICE
@@ -68,14 +67,15 @@ are rejected explicitly; there is no silent text-only fallback.
   intricate structure. A hidden detail or a new path to explore must follow
   from a visible feature, such as a crack, seam, branch, or opening.
 - Each step sends the current frame and click coordinates to the backend. Qwen
-  sees the same unsharpened quarter-width crop used for image editing, along
-  with the starting direction and up to three recent refinements as context.
+  sees the same unsharpened half-width crop used for image editing, along
+  with the starting direction and selected variation. Previous generated prompts
+  and detail directions are omitted from the model input.
 - Qwen returns factual crop observations, a short detail direction, and the
   standalone prompt sent to diffusion. The detail panel shows the latest
   direction. Open **Prompt used for the last image** to see the exact prompt
   and crop observations.
-- History advances after a successful edit. Uploading a new image, editing the
-  starting direction, or choosing **Reset detail history** clears it. Disabling
+- The detail panel updates after a successful edit. Uploading a new image,
+  editing the starting direction, or choosing **Reset detail panel** clears it. Disabling
   prompt evolution uses the starting prompt for each edit.
 
 Image grounding improves prompt relevance, but does not guarantee object preservation
@@ -91,16 +91,17 @@ each generation to leave room for the local prompt writer.
 ## Geometry
 
 The upload is center-cropped and resized to a 1024-square working frame. Each
-click selects a square one quarter of the current frame's width and height,
-giving a 4× zoom. Near the edges, the crop shifts inward to stay within the frame.
+click selects a square half of the current frame's width and height,
+giving a 2× zoom. Near the edges, the crop shifts inward to stay within the frame.
 The generator upscales that crop with Lanczos to 512×512 for SD-Turbo or
 1024×1024 for Z-Image-Turbo before sharpening and latent noising. All comparison
 views share the crop, and the blended result becomes the next working frame.
 
-The view starts zooming while the scene and image are generated. For longer
-requests it holds just outside the target crop, then blends the refined detail
-into the aligned region as the camera completes the zoom. Reduced-motion mode
-shows the completed frame directly.
+The view starts zooming immediately. During generation it eases toward 85% of
+the crop transition over six seconds. Once the result is available, it finishes
+zooming and blends in the aligned detail over roughly 1.4–2.3 seconds, depending
+on how far the view has moved. Reduced-motion mode shows the completed frame
+directly.
 
 ## Border-only blending
 
