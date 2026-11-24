@@ -4,8 +4,8 @@
 
 1. Open [Google Colab](https://colab.research.google.com/), choose **File → Upload notebook**, and select [Generative_Zoom.ipynb](Generative_Zoom.ipynb) from this project. The notebook includes the Python app, browser UI, and dependency files. You can share just the notebook with a partner.
 2. Choose **Runtime → Change runtime type**, select a GPU (start with a T4), save, and connect. Choose **Runtime → Run all**. The setup cell prints the assigned GPU, installs the dependencies, and the final code cell displays the demo.
-3. Upload a photo in the demo, enter a starting direction or choose a preset, and leave **Evolve prompt each zoom** enabled. Select **Diffusion · SD-Turbo** and click a detail in the image. The first click downloads the weights and loads both models. Later clicks reuse them.
-4. Click the result to continue. The story panel shows each discovery, and **Prompt used for the last image** shows what Qwen sent to diffusion. Use **Restart story** to clear the text history while keeping the current image.
+3. Upload a photo in the demo, enter a starting direction or choose a preset, and leave **Evolve prompt each zoom** enabled. In **Backend**, choose **Diffusion · SD-Turbo** for a T4 or **Z-Image-Turbo · 1024×1024** on an L4, A100, or another GPU with native BF16 support and enough VRAM. Click a detail in the image. The first click downloads and loads the selected models. Later clicks reuse them.
+4. Click the result to continue. The detail panel shows the latest refinement, and **Prompt used for the last image** shows what Qwen sent to diffusion. Use **Reset detail history** to clear the text history while keeping the current image.
 5. Keep the runtime connected while using the demo. When finished, choose **Runtime → Disconnect and delete runtime** to release the GPU. A fresh runtime downloads the weights again.
 
 Colab runs Qwen3-VL-4B through Transformers with 4-bit weights and runs diffusion on the same GPU. Both models download directly from Hugging Face. The hosted demo uses Colab's built-in port proxy. For a quick UI check, select **Lanczos only** and click the image. If a larger image model exhausts GPU memory, rerun **Start the demo** and select SD-Turbo. To see server output, run `print(log.read_text()[-4000:])` in a new cell.
@@ -37,15 +37,15 @@ Hugging Face cache; GPU selection is automatic (MPS on Apple Silicon).
 
 Upload an image; click a point to generate. With **Evolve prompt each zoom**
 enabled, local Qwen3-VL-4B inspects the clicked crop and writes a new prompt and short
-story beat before diffusion.
-The starting prompt remains the anchor; the browser retains the last three text
-beats. No image history or generated-image disk output is kept. The diffusion
+detail direction before diffusion.
+The starting prompt remains the anchor; the browser retains the last three detail
+directions. No image history or generated-image disk output is kept. The diffusion
 seed stays fixed until edited. Lanczos only skips both prompt writing and diffusion. SD-Turbo downloads on its first diffusion request and stays in memory.
 Direct StableDiffusionImg2ImgPipeline import avoids unrelated Qwen imports.
 ZOOM_MODEL=stabilityai/sdxl-turbo optionally selects the XL pipeline. ZOOM_DEVICE
 can be cpu, mps, or cuda; default auto-detects. GPU speed is not measured here.
 
-## Local story director (Ollama)
+## Local detail director (Ollama)
 
 Ollama must be installed and running (`ollama serve` if needed). Pull the small
 local model once:
@@ -60,27 +60,23 @@ ollama pull qwen3-vl:4b-instruct
 supports vision, structured output and non-thinking generation. Text-only models
 are rejected explicitly; there is no silent text-only fallback.
 
-- **Starting prompt / story direction** stays constant until you edit it.
-- **Story variation** defaults to Medium; Gentle changes less, Surprising permits
-  larger departures. The current crop takes priority over the initial theme and
-  previous story; creative cues are optional and must fit the visible content.
-- Each step sends the current 1024px frame and click coordinates to the backend.
-  The backend extracts the same unsharpened 512px patch used by diffusion and
-  supplies its lossless PNG to Qwen through Ollama's image input. It also supplies
-  the initial direction and last three discoveries. The image is inspected again
-  for every click, so moving to a new subject can override the earlier story.
-- Qwen first writes factual crop observations (10-15 words), then a short story
-  sentence (10-15 words) and a standalone diffusion prompt (30-40 words). These are
-  prompt-level length targets, not hard truncation rules. Thinking is off; token
-  sampling uses the selected temperature. Near-duplicate scenes
-  trigger one retry; invalid or unavailable results stop the step with an error.
-- Story context advances only after the resulting image succeeds. Uploading a
-  new image, editing the starting prompt, or pressing **Restart story** resets it.
-  Restarting the story keeps the current image. Disabling evolution uses the exact
-  fixed prompt for controlled comparisons.
-- The story panel shows the latest discovery and actual prompt used. The prompt
-  dropdown starts collapsed and closes after each successful step or story reset.
-  It includes the visible crop observations for checking what guided the prompt.
+- **Starting artistic direction** stays constant until you edit it. Qwen names a
+  visible object or feature and proposes one primary refinement that preserves
+  its identity and the crop's composition.
+- **Detail variation** defaults to Medium. Gentle refines a visible feature,
+  Medium may reveal one small hidden detail, and Surprising may reveal a more
+  intricate structure. A hidden detail or a new path to explore must follow
+  from a visible feature, such as a crack, seam, branch, or opening.
+- Each step sends the current frame and click coordinates to the backend. Qwen
+  sees the same unsharpened quarter-width crop used for image editing, along
+  with the starting direction and up to three recent refinements as context.
+- Qwen returns factual crop observations, a short detail direction, and the
+  standalone prompt sent to diffusion. The detail panel shows the latest
+  direction. Open **Prompt used for the last image** to see the exact prompt
+  and crop observations.
+- History advances after a successful edit. Uploading a new image, editing the
+  starting direction, or choosing **Reset detail history** clears it. Disabling
+  prompt evolution uses the starting prompt for each edit.
 
 Image grounding improves prompt relevance, but does not guarantee object preservation
 by diffusion. Refinement strength still controls how far the generated image may
@@ -95,29 +91,30 @@ each generation to leave room for the local prompt writer.
 ## Geometry
 
 The upload is center-cropped and resized to a 1024-square working frame. Each
-click extracts a 1024-square context at the current pixel scale, replicating
-pixels beyond the frame edges. Its central 512-square patch goes to diffusion
-without any resize at that click. Insert the generated patch into the context
-with border feathering, then enlarge the center by 2× using Lanczos for display
-and the next click. The comparison views use the same framing.
+click selects a square one quarter of the current frame's width and height,
+giving a 4× zoom. Near the edges, the crop shifts inward to stay within the frame.
+The generator upscales that crop with Lanczos to 512×512 for SD-Turbo or
+1024×1024 for Z-Image-Turbo before sharpening and latent noising. All comparison
+views share the crop, and the blended result becomes the next working frame.
+
+The view starts zooming while the scene and image are generated. For longer
+requests it holds just outside the target crop, then blends the refined detail
+into the aligned region as the camera completes the zoom. Reduced-motion mode
+shows the completed frame directly.
 
 ## Border-only blending
 
-Paste the generated 512×512 patch at [256:768,256:768] in the 1024×1024 context.
-There are no pyramids, image blurs, or frequency corrections.
-
-For distance d from the nearest patch edge, with border width w (default 32):
+The generated image and Lanczos baseline are aligned at 1024×1024. The border
+width control is measured at 512px scale, so its default value of 32 blends the
+outer 64 pixels in the output. For distance d from the nearest edge and output
+border width w:
 
     t = clip(d / w, 0, 1)
     alpha = (1 - cos(pi * t)) / 2
-    output = alpha * generated + (1-alpha) * original_context_patch
+    output = alpha * generated + (1 - alpha) * baseline
 
-Only the border changes. The interior 448×448 pixels are copied directly from
-the generation; everything outside the 512×512 patch is unchanged. Width 0 is
-a hard paste. The raw comparison also starts with a hard paste, useful for checking
-whether blur already exists in the generation. Next clicks use the composite.
-
-A 450ms temporal fade reveals the result; the final image has no global fade.
+The interior comes directly from the resized generation. Width 0 uses the full
+generated image, which is also available in the raw comparison view.
 
 ## Prompts and first experiments
 
@@ -153,19 +150,18 @@ understands the desired scene poorly, accepting greater compute cost.
 python -m unittest discover -s tests -v
 ```
 
-Border tests verify exact interior/exterior preservation, edge behavior, and zero-width
-hard paste. JavaScript syntax is checked. Model generation and browser appearance
+Tests verify the relative crop and edge bounds, shared crop pixels, and border-only blending. JavaScript syntax is checked. Model generation and browser appearance
 remain unverified here.
 
 ## Pre-noise sharpening and noise schedule
 
-The 512px input patch now receives Pillow UnsharpMask (radius 1.5px, threshold 3,
+The upscaled model input receives Pillow UnsharpMask (radius 1.5px, threshold 3,
 amount 1.5 = 150%) before the pipeline's VAE encoder and latent noising. Amount 0
 bypasses it. Blending still uses the untouched context. This boosts existing edge
 contrast but cannot guarantee that diffusion preserves those edges.
 
-The refinement dropdown selects the last K entries of the model's four-step
-schedule. Diffusers adds noise at the first selected timestep and denoises
+The refinement dropdown selects the last K entries of the model's schedule (four steps for SD-Turbo
+and eight for Z-Image-Turbo). Diffusers adds noise at the first selected timestep and denoises
 through all K entries. For SD-Turbo, three steps start at normalized time 0.75
 (scheduler index 749), then use indices 499 and 249 before the clean endpoint.
 The UI reports the actual step count and starting scheduler index.

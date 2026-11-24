@@ -8,7 +8,7 @@ from unittest.mock import patch
 from PIL import Image
 from pydantic import ValidationError
 
-from director import DirectorRequest, PromptDirector, StoryBeat
+from director import DirectorRequest, PromptDirector, DetailDirection
 
 
 def frame():
@@ -28,14 +28,14 @@ class DirectorTests(unittest.TestCase):
     def request(self, **overrides):
         values = dict(image=frame(), center=(0.25, 0.5),
                       initial_prompt='An ancient forest of moss and ferns',
-                      history=[StoryBeat(prompt=f'forest scene {i}', story=f'beat {i}') for i in range(6)],
+                      history=[DetailDirection(prompt=f'forest scene {i}', detail=f'beat {i}') for i in range(6)],
                       step=7)
         values.update(overrides)
         return DirectorRequest(**values)
 
     def mock_ollama(self, send, beats=None):
         bodies = iter(beats or [{'observations': 'A red surface fills the crop.',
-                                'story': 'A fine amber grain glints on the red surface.',
+                                'detail': 'A fine amber grain glints on the red surface.',
                                 'prompt': 'Fine amber grains glint across a crimson surface in warm light.'}])
         calls = []
         def reply(req, **kwargs):
@@ -55,19 +55,19 @@ class DirectorTests(unittest.TestCase):
         payload = calls[0]
         context = json.loads(payload['messages'][1]['content'])
         self.assertEqual(context['starting_direction'], self.request().initial_prompt)
-        self.assertEqual(context['recent_discoveries_do_not_repeat'], ['beat 3', 'beat 4', 'beat 5'])
-        self.assertEqual(context['current_discovery'], 'beat 5')
+        self.assertEqual(context['recent_refinements'], ['beat 3', 'beat 4', 'beat 5'])
+        self.assertEqual(context['variation'], 'medium')
         self.assertFalse(payload['think'])
         self.assertFalse(payload['stream'])
-        self.assertEqual(payload['format']['required'], ['observations', 'story', 'prompt'])
+        self.assertEqual(payload['format']['required'], ['observations', 'detail', 'prompt'])
         crop = Image.open(io.BytesIO(base64.b64decode(payload['messages'][1]['images'][0])))
-        self.assertEqual(crop.size, (512, 512))
-        self.assertEqual(crop.getpixel((256, 256)), (255, 0, 0))
+        self.assertEqual(crop.size, (256, 256))
+        self.assertEqual(crop.getpixel((128, 128)), (255, 0, 0))
         self.assertEqual(out['observations'], 'A red surface fills the crop.')
 
     @patch('director.urllib.request.urlopen')
     def test_changing_click_changes_pixels_given_to_model(self, send):
-        beat = {'observations': 'A colored surface.', 'story': 'A delicate texture.', 'prompt': 'Fine surface texture.'}
+        beat = {'observations': 'A colored surface.', 'detail': 'A delicate texture.', 'prompt': 'Fine surface texture.'}
         calls = self.mock_ollama(send, [beat, beat])
         director = PromptDirector()
         director.next(self.request(center=(0.25, 0.5), history=[]))
@@ -75,22 +75,25 @@ class DirectorTests(unittest.TestCase):
         crops = [Image.open(io.BytesIO(base64.b64decode(c['messages'][1]['images'][0]))) for c in calls]
         self.assertEqual(crops[0].getpixel((0, 0)), (255, 0, 0))
         self.assertEqual(crops[1].getpixel((0, 0)), (0, 0, 255))
-        # Verify diffusion receives exactly the same unsharpened source pixels.
+        # Verify the generator receives the same source pixels before upscaling.
         import app
         import numpy as np
         for center, crop in zip([(0.25, 0.5), (0.75, 0.5)], crops):
             with patch.object(app.generator, 'generate', return_value=(crop, {})) as generate:
-                app.zoom(app.Request(image=frame(), center=center, prompt='test'))
+                output = app.zoom(app.Request(image=frame(), center=center, prompt='test'))
+                for key in ('image', 'raw', 'baseline'):
+                    view = Image.open(io.BytesIO(base64.b64decode(output[key].split(',')[1])))
+                    self.assertEqual(view.size, (1024, 1024))
                 np.testing.assert_array_equal(np.asarray(generate.call_args.args[0]), np.asarray(crop))
 
     @patch('director.urllib.request.urlopen')
-    def test_repeated_scene_retries_with_same_image(self, send):
-        old = {'observations': 'A red surface.', 'story': 'beat 5', 'prompt': 'forest scene 5'}
-        new = {'observations': 'A red surface.', 'story': 'Amber flecks glint in the red paint.',
+    def test_repeated_refinement_retries_with_same_image(self, send):
+        old = {'observations': 'A red surface.', 'detail': 'beat 5', 'prompt': 'forest scene 5'}
+        new = {'observations': 'A red surface.', 'detail': 'Amber flecks glint in the red paint.',
                'prompt': 'A crimson painted surface with fine amber flecks and subtle hairline cracks.'}
         calls = self.mock_ollama(send, [old, new])
         out = PromptDirector().next(self.request())
-        self.assertEqual(out['story'], new['story'])
+        self.assertEqual(out['detail'], new['detail'])
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[0]['messages'][1]['images'], calls[1]['messages'][1]['images'])
 
@@ -123,15 +126,15 @@ class DirectorTests(unittest.TestCase):
             PromptDirector().next(self.request())
 
     @patch('director.urllib.request.urlopen')
-    def test_rejects_incomplete_or_invalid_scenes(self, send):
+    def test_rejects_incomplete_or_invalid_directions(self, send):
         for body in [
             {'done': True, 'done_reason': 'length', 'message': {'content': '{}'}},
             {'done': True, 'message': {'content': '{"prompt": "only a prompt"}'}},
-            {'done': True, 'message': {'content': '{"observations":" ","prompt":" ","story":" "}'}},
+            {'done': True, 'message': {'content': '{"observations":" ","prompt":" ","detail":" "}'}},
         ]:
             with self.subTest(body=body):
                 send.side_effect = lambda req, **kw: response({'capabilities': ['vision']} if req.full_url.endswith('/api/show') else body)
-                with self.assertRaisesRegex(RuntimeError, 'incomplete scene'):
+                with self.assertRaisesRegex(RuntimeError, 'incomplete detail direction'):
                     PromptDirector().next(self.request())
 
 

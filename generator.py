@@ -51,9 +51,9 @@ class Generator:
             self.loaded_model = model_id
             load_time = time.perf_counter()-start
         start = time.perf_counter()
+        input_size = 1024 if is_z_image else 512
+        image = image.resize((input_size, input_size), Image.Resampling.LANCZOS)
         image = sharpen_input(image, sharpen)
-        if is_z_image:
-            image = image.resize((1024, 1024), Image.Resampling.LANCZOS)
         used_timesteps = []
         def record_step(pipe, index, timestep, callback_kwargs):
             used_timesteps.append(float(timestep))

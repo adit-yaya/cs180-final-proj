@@ -1,4 +1,4 @@
-"""Local zoom server; the browser supplies bounded story context per request."""
+"""Local zoom server; the browser supplies bounded refinement context per request."""
 import base64
 import io
 import threading
@@ -7,12 +7,13 @@ from pathlib import Path
 
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from PIL import Image
 from pydantic import BaseModel, Field, model_validator
 from typing import Literal, Tuple
 
 from director import DirectorRequest, PromptDirector
 from generator import Generator
-from imaging import decode_zoom_context, insert_center, raw_center, zoom_center, feather_patch
+from imaging import FRAME_SIZE, decode_zoom_crop, feather_patch
 
 ROOT = Path(__file__).resolve().parent
 generator = Generator()
@@ -46,22 +47,19 @@ def zoom(req: Request):
     if not model_lock.acquire(blocking=False):
         raise ValueError('A generation is already running')
     try:
-        context = decode_zoom_context(req.image, req.center)
-        baseline = context.crop((256, 256, 768, 768))
+        crop, bounds = decode_zoom_crop(req.image, req.center)
         start = time.perf_counter()
         try:
-            raw, timing = generator.generate(baseline, req.prompt, req.refinement_steps, req.seed, req.backend, req.sharpen)
+            raw, timing = generator.generate(crop, req.prompt, req.refinement_steps, req.seed, req.backend, req.sharpen)
         except Exception as exc:
             raise RuntimeError(f'Generation failed: {exc}') from exc
-        baseline_view = zoom_center(context)
-        if req.backend == 'z-image':
-            raw_view = raw
-            blended_view = feather_patch(baseline_view, raw_view, 2 * req.feather)
-        else:
-            raw_view = zoom_center(raw_center(context, raw))
-            blended_view = zoom_center(insert_center(context, raw, req.feather))
+        output_size = (FRAME_SIZE, FRAME_SIZE)
+        baseline_view = crop.resize(output_size, Image.Resampling.LANCZOS)
+        raw_view = raw.resize(output_size, Image.Resampling.LANCZOS)
+        blended_view = feather_patch(baseline_view, raw_view, 2 * req.feather)
         return {'image': encode(blended_view), 'baseline': encode(baseline_view),
-                'raw': encode(raw_view), 'seconds': time.perf_counter()-start, **timing}
+                'raw': encode(raw_view), 'crop': bounds,
+                'seconds': time.perf_counter()-start, **timing}
 
     finally:
         model_lock.release()

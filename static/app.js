@@ -1,22 +1,19 @@
 const $ = id => document.getElementById(id);
 const canvas = $('canvas'), ctx = canvas.getContext('2d');
 let current = null, result = null, center = [0.5, 0.5], busy = false;
-let storyHistory = [], storyStep = 0;
-function resetStory() {
-  storyHistory = []; storyStep = 0;
-  $('storyHeading').textContent = 'Story starts with your next zoom.';
-  $('storyBeat').textContent = ''; $('usedPrompt').textContent = '';
+let detailHistory = [], detailStep = 0;
+function resetDetails() {
+  detailHistory = []; detailStep = 0;
+  $('detailHeading').textContent = 'Detail direction appears after your next zoom.';
+  $('detailDirection').textContent = ''; $('usedPrompt').textContent = '';
   $('cropObservation').textContent = '';
   $('promptDetails').open = false;
 }
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
-function draw(image = null, box = null) {
-  ctx.clearRect(0, 0, 1024, 1024);
-  image ||= result?.[$('view').value] || current;
-  if (!image) return;
-  if (box) ctx.drawImage(image, box[0]*1024, box[1]*1024, box[2]*1024, box[2]*1024, 0, 0, 1024, 1024);
-  else ctx.drawImage(image, 0, 0, 1024, 1024);
-
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const image = result?.[$('view').value] || current;
+  if (image) ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
 }
 function loadImage(url) {
   return new Promise((resolve, reject) => {
@@ -38,7 +35,7 @@ $('upload').onchange = async e => {
     const im = await loadImage(url), s = Math.min(im.width, im.height);
     const c = document.createElement('canvas'); c.width = c.height = 1024;
     c.getContext('2d').drawImage(im, (im.width-s)/2, (im.height-s)/2, s, s, 0, 0, 1024, 1024);
-    current = await loadImage(c.toDataURL()); result = null; center = [0.5,0.5]; resetStory();
+    current = await loadImage(c.toDataURL()); result = null; center = [0.5,0.5]; resetDetails();
     $('view').value = 'image'; draw();
     $('status').textContent = 'Choose a region and zoom. First diffusion call downloads/loads the model.';
   } catch (e) { $('status').textContent = e.message; }
@@ -51,15 +48,67 @@ canvas.onpointerdown = e => {
   generate();
 };
 $('view').onchange = () => draw();
-// Reveal the generated patch in the enlarged context.
-function animate(duration, frame) {
-  return new Promise(resolve => {
-    const start = performance.now();
-    function tick(t) { const u = Math.min(1, (t-start)/duration); frame(u*u*(3-2*u)); if (u<1) requestAnimationFrame(tick); else resolve(); }
-    requestAnimationFrame(tick);
-  });
+function previewZoom(source, center) {
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const size = canvas.width;
+  const cropSize = size / 4;
+  // Match decode_zoom_crop so the pending preview and server result align.
+  const [previewLeft, previewTop] = center.map(value =>
+    clamp(Math.round(value * size) - cropSize / 2, 0, size - cropSize));
+  let frame;
+  let progress = 0;
+  let start;
+  const ease = t => t * t * (3 - 2 * t);
+
+  function render(left, top, width, image, opacity = 0) {
+    const span = size + (width - size) * progress;
+    const viewLeft = left * progress;
+    const viewTop = top * progress;
+    ctx.drawImage(source, viewLeft, viewTop, span, span, 0, 0, size, size);
+    if (image) {
+      const scale = size / span;
+      ctx.globalAlpha = opacity;
+      ctx.drawImage(image, (left - viewLeft) * scale, (top - viewTop) * scale,
+        width * scale, width * scale);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  function preview(now) {
+    start ??= now;
+    const elapsed = clamp((now - start) / 7000, 0, 1);
+    // Move toward the crop while inference runs, leaving room for the reveal.
+    progress = 0.88 * (1 - (1 - elapsed) ** 3);
+    render(previewLeft, previewTop, cropSize);
+    if (elapsed < 1) frame = requestAnimationFrame(preview);
+  }
+
+  if (!reducedMotion) frame = requestAnimationFrame(preview);
+  const cancel = () => cancelAnimationFrame(frame);
+  return {
+    cancel,
+    finish(image, [left, top, right]) {
+      if (reducedMotion) return;
+      cancel();
+      const from = progress;
+      const duration = 500 + 450 * (1 - from);
+      let revealStart;
+      return new Promise(resolve => {
+        function reveal(now) {
+          revealStart ??= now;
+          const t = clamp((now - revealStart) / duration, 0, 1);
+          const blend = ease(t);
+          progress = from + (1 - from) * blend;
+          render(left, top, right - left, image, blend);
+          if (t < 1) frame = requestAnimationFrame(reveal);
+          else resolve();
+        }
+        frame = requestAnimationFrame(reveal);
+      });
+    }
+  };
 }
-async function requestScene(body) {
+async function requestDetail(body) {
   const start = performance.now();
   const controller = new AbortController();
   let timer;
@@ -90,52 +139,51 @@ async function requestScene(body) {
 async function generate() {
   if (!current || busy) return;
   const source = current;
-  let nextBeat = null;
+  let nextDetail = null;
   const payload = {image:dataURL(source), center:center, prompt:$('prompt').value,
     backend:$('backend').value, refinement_steps:Number($('refinementSteps').value),
     seed:Number($('seed').value), sharpen:Number($('sharpen').value), feather:Number($('feather').value)};
   setBusy(true); $('view').value = 'image';
   $('status').textContent = 'Generating… (first model load can take several minutes)';
+  const zoom = previewZoom(source, payload.center);
   try {
     if ($('evolvePrompt').checked && payload.backend !== 'upscale') {
       if (!payload.prompt.trim()) throw new Error('Enter a starting prompt or choose a preset.');
-      $('status').textContent = 'Reading the selected crop and writing the next scene…';
-      const directorResponse = await requestScene({
+      $('status').textContent = 'Reading the selected crop and writing a detail direction…';
+      const directorResponse = await requestDetail({
         image: payload.image, center: payload.center,
-        initial_prompt: payload.prompt, history: storyHistory.slice(-3),
-        step: storyStep + 1, variation: $('variation').value
+        initial_prompt: payload.prompt, history: detailHistory.slice(-3),
+        step: detailStep + 1, variation: $('variation').value
       });
       const directed = await directorResponse.json();
       if (!directorResponse.ok) throw new Error(typeof directed.detail === 'string' ? directed.detail : JSON.stringify(directed.detail));
-      nextBeat = directed; payload.prompt = directed.prompt;
+      nextDetail = directed; payload.prompt = directed.prompt;
     }
     $('status').textContent = 'Generating the image…';
-    // Keep the UI responsive while the server generates.
-    const pending = fetch('api/zoom', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)})
-      .then(async r => {const data = await r.json(); if (!r.ok) throw new Error(typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail)); return data;})
-      .then(data => ({data}), error => ({error}));
-    // Keep the current frame while inference runs; commit story text only after success.
-    const response = await pending; if (response.error) throw response.error;
-    const data = response.data;
+    const response = await fetch('api/zoom', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail));
     const [image, raw, baseline] = await Promise.all([data.image, data.raw, data.baseline].map(loadImage));
-    await animate(450, t => { draw(baseline, [0,0,1]); ctx.globalAlpha=t; ctx.drawImage(image,0,0,1024,1024); ctx.globalAlpha=1; });
+    await zoom.finish(image, data.crop);
     current = image; result = {image, raw, baseline}; center = [0.5,0.5];
-    if (nextBeat) {
-      storyStep += 1;
-      storyHistory.push({prompt: nextBeat.prompt, story: nextBeat.story});
-      storyHistory = storyHistory.slice(-3);
-      $('storyHeading').textContent = `Step ${storyStep}`;
-      $('storyBeat').textContent = nextBeat.story;
+    if (nextDetail) {
+      detailStep += 1;
+      detailHistory.push({prompt: nextDetail.prompt, detail: nextDetail.detail});
+      detailHistory = detailHistory.slice(-3);
+      $('detailHeading').textContent = `Detail direction · Step ${detailStep}`;
+      $('detailDirection').textContent = nextDetail.detail;
     } else {
-      $('storyHeading').textContent = payload.backend === 'upscale' ? 'Lanczos only · story paused' : 'Fixed prompt · story paused';
-      $('storyBeat').textContent = '';
+      $('detailHeading').textContent = payload.backend === 'upscale' ? 'Lanczos only · detail refinement paused' : 'Fixed prompt · detail refinement paused';
+      $('detailDirection').textContent = '';
     }
     $('usedPrompt').textContent = payload.prompt;
-    $('cropObservation').textContent = nextBeat ? `Visible in selected crop: ${nextBeat.observations}` : '';
+    $('cropObservation').textContent = nextDetail ? `Visible in selected crop: ${nextDetail.observations}` : '';
     $('promptDetails').open = false;
     $('status').textContent = `${data.denoising_steps} denoising steps from t=${data.start_timestep ?? "—"} · inference ${data.inference_seconds.toFixed(2)}s · load ${data.load_seconds.toFixed(2)}s · total ${data.seconds.toFixed(2)}s`;
   } catch(e) { $('status').textContent = e.message; }
-  finally { setBusy(false); draw(); }
+  finally { zoom.cancel(); setBusy(false); draw(); }
 };
 draw();
 const prompts = {
@@ -144,10 +192,10 @@ const prompts = {
   surreal: 'A miniature world within an organic landscape, branching river channels surrounding tiny terraced gardens, intricate structures nested inside larger forms, coherent natural materials and illumination, richly varied small-scale detail, crisp focus throughout',
   material: 'An extreme close-up of layered natural material, branching fissures, interlocking crystalline grains, tiny pores and translucent mineral veins, irregular multiscale structure, crisp surface detail throughout, diffuse lighting'
 };
-$('preset').onchange = () => { if (prompts[$('preset').value]) { $('prompt').value = prompts[$('preset').value]; resetStory(); } };
-$('prompt').oninput = resetStory;
-$('resetStory').onclick = resetStory;
-$('evolvePrompt').onchange = resetStory;
+$('preset').onchange = () => { if (prompts[$('preset').value]) { $('prompt').value = prompts[$('preset').value]; resetDetails(); } };
+$('prompt').oninput = resetDetails;
+$('resetDetails').onclick = resetDetails;
+$('evolvePrompt').onchange = resetDetails;
 
 $('backend').onchange = () => {
   const steps = $('refinementSteps');
