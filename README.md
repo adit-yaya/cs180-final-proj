@@ -67,7 +67,7 @@ are rejected explicitly; there is no silent text-only fallback.
   intricate structure. A hidden detail or a new path to explore must follow
   from a visible feature, such as a crack, seam, branch, or opening.
 - Each step sends the current frame and click coordinates to the backend. Qwen
-  sees the same unsharpened half-width crop used for image editing, along
+  sees the same unsharpened crop used for image editing, along
   with the starting direction and selected variation. Previous generated prompts
   and detail directions are omitted from the model input.
 - Qwen returns factual crop observations, a short detail direction, and the
@@ -91,8 +91,8 @@ each generation to leave room for the local prompt writer.
 ## Geometry
 
 The upload is center-cropped and resized to a 1024-square working frame. Each
-click selects a square half of the current frame's width and height,
-giving a 2× zoom. Near the edges, the crop shifts inward to stay within the frame.
+click selects a square based on **Zoom per click**. The default **2×** uses half
+the frame's width and height, and **4×** uses one quarter. Near the edges, the crop shifts inward to stay within the frame.
 The generator upscales that crop with Lanczos to 512×512 for SD-Turbo or
 1024×1024 for Z-Image-Turbo before sharpening and latent noising. All comparison
 views share the crop, and the blended result becomes the next working frame.

@@ -9,7 +9,7 @@ from PIL import Image, ImageFilter
 FRAME_SIZE = 1024
 
 
-def decode_zoom_crop(encoded_image, center):
+def decode_zoom_crop(encoded_image, center, zoom_factor=2):
     """Return the original crop pixels and the source bounds used to select them."""
     if len(center) != 2 or not all(0 <= value <= 1 for value in center):
         raise ValueError('Center must lie inside the image')
@@ -18,7 +18,7 @@ def decode_zoom_crop(encoded_image, center):
         with Image.open(io.BytesIO(data)) as source:
             if source.size != (FRAME_SIZE, FRAME_SIZE):
                 raise ValueError('Expected a 1024 × 1024 input image')
-            size = source.width // 2
+            size = source.width // zoom_factor
             left, top = (
                 max(0, min(source.width - size, int(value * source.width + 0.5) - size // 2))
                 for value in center

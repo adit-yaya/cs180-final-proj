@@ -9,7 +9,7 @@
 </head>
 <body>
 <h1>Generative zoom</h1>
-<p>Load an image. Click a point to zoom 2× and refine the selected region.</p>
+<p>Load an image. Click a point to zoom in and refine the selected region.</p>
 <div class="layout"><main>
 <canvas id="canvas" width="1024" height="1024" aria-label="Image and selected zoom region"></canvas>
 <div id="compare"><label>View <select id="view"><option value="image">Blended result (next zoom starts here)</option><option value="raw">Raw generation</option><option value="baseline">Lanczos crop baseline</option></select></label></div>
@@ -27,6 +27,7 @@
 <details id="promptDetails"><summary>Prompt used for the last image</summary><p id="cropObservation" style="overflow-wrap:anywhere;margin:8px 0"></p><p id="usedPrompt" style="overflow-wrap:anywhere;margin:8px 0"></p></details>
 </div>
 <label>Backend <select id="backend"><option value="diffusion">Diffusion · SD-Turbo</option><option value="z-image">Z-Image-Turbo · 1024×1024</option><option value="upscale">Lanczos only · no generation</option></select></label>
+<label>Zoom per click <select id="zoomFactor"><option value="2" selected>2×</option><option value="4">4×</option></select></label>
 <label>Refinement steps
 <select id="refinementSteps">
 <option value="1">1 step</option>

@@ -23,6 +23,7 @@ prompt_director = PromptDirector()
 class Request(BaseModel):
     image: str = Field(max_length=8_000_000)
     center: Tuple[float, float]
+    zoom_factor: Literal[2, 4] = 2
     prompt: str = Field(max_length=2000)
     backend: Literal['upscale', 'diffusion', 'z-image'] = 'diffusion'
     refinement_steps: int = Field(default=3, ge=1, le=8)
@@ -47,7 +48,7 @@ def zoom(req: Request):
     if not model_lock.acquire(blocking=False):
         raise ValueError('A generation is already running')
     try:
-        crop, bounds = decode_zoom_crop(req.image, req.center)
+        crop, bounds = decode_zoom_crop(req.image, req.center, req.zoom_factor)
         start = time.perf_counter()
         try:
             raw, timing = generator.generate(crop, req.prompt, req.refinement_steps, req.seed, req.backend, req.sharpen)

@@ -18,6 +18,7 @@ from imaging import decode_zoom_crop
 class DirectorRequest(BaseModel):
     image: str = Field(min_length=1, max_length=8_000_000)
     center: tuple[float, float]
+    zoom_factor: Literal[2, 4] = 2
     initial_prompt: str = Field(min_length=1, max_length=2000)
     step: int = Field(default=1, ge=1, le=1000000)
     variation: Literal['gentle', 'medium', 'surprising'] = 'medium'
@@ -107,7 +108,7 @@ class PromptDirector:
 
     def next(self, request: DirectorRequest, _retry=False):
         start = time.perf_counter()
-        crop, _ = decode_zoom_crop(request.image, request.center)
+        crop, _ = decode_zoom_crop(request.image, request.center, request.zoom_factor)
         seed = secrets.randbelow(2147483647)
         user = json.dumps({
             'starting_direction': request.initial_prompt,

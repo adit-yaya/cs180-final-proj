@@ -69,16 +69,17 @@ class DirectorTests(unittest.TestCase):
         calls = self.mock_ollama(send, [beat, beat])
         director = PromptDirector()
         director.next(self.request(center=(0.25, 0.5)))
-        director.next(self.request(center=(0.75, 0.5)))
+        director.next(self.request(center=(0.75, 0.5), zoom_factor=4))
         crops = [Image.open(io.BytesIO(base64.b64decode(c['messages'][1]['images'][0]))) for c in calls]
         self.assertEqual(crops[0].getpixel((0, 0)), (255, 0, 0))
+        self.assertEqual(crops[1].size, (256, 256))
         self.assertEqual(crops[1].getpixel((0, 0)), (0, 0, 255))
         # Verify the generator receives the same source pixels before upscaling.
         import app
         import numpy as np
-        for center, crop in zip([(0.25, 0.5), (0.75, 0.5)], crops):
+        for center, factor, crop in zip([(0.25, 0.5), (0.75, 0.5)], [2, 4], crops):
             with patch.object(app.generator, 'generate', return_value=(crop, {})) as generate:
-                output = app.zoom(app.Request(image=frame(), center=center, prompt='test'))
+                output = app.zoom(app.Request(image=frame(), center=center, zoom_factor=factor, prompt='test'))
                 for key in ('image', 'raw', 'baseline'):
                     view = Image.open(io.BytesIO(base64.b64decode(output[key].split(',')[1])))
                     self.assertEqual(view.size, (1024, 1024))

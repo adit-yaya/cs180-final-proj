@@ -44,10 +44,10 @@ canvas.onpointerdown = e => {
   generate();
 };
 $('view').onchange = () => draw();
-function previewZoom(source, center) {
+function previewZoom(source, center, zoomFactor) {
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const size = canvas.width;
-  const cropSize = size / 2;
+  const cropSize = size / zoomFactor;
   const previewDuration = 6000;
   const previewLimit = 0.85;
   const minimumRevealDuration = 1200;
@@ -145,18 +145,18 @@ async function generate() {
   if (!current || busy) return;
   const source = current;
   let nextDetail = null;
-  const payload = {image:source.src, center:center, prompt:$('prompt').value,
+  const payload = {image:source.src, center:center, zoom_factor:Number($('zoomFactor').value), prompt:$('prompt').value,
     backend:$('backend').value, refinement_steps:Number($('refinementSteps').value),
     seed:Number($('seed').value), sharpen:Number($('sharpen').value), feather:Number($('feather').value)};
   setBusy(true); $('view').value = 'image';
   $('status').textContent = 'Generating… (first model load can take several minutes)';
-  const zoom = previewZoom(source, payload.center);
+  const zoom = previewZoom(source, payload.center, payload.zoom_factor);
   try {
     if ($('evolvePrompt').checked && payload.backend !== 'upscale') {
       if (!payload.prompt.trim()) throw new Error('Enter a starting prompt or choose a preset.');
       $('status').textContent = 'Reading the selected crop and writing a detail direction…';
       const directorResponse = await requestDetail({
-        image: payload.image, center: payload.center,
+        image: payload.image, center: payload.center, zoom_factor: payload.zoom_factor,
         initial_prompt: payload.prompt,
         step: detailStep + 1, variation: $('variation').value
       });
