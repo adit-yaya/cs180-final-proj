@@ -1,53 +1,115 @@
+import base64
 import io
 import json
 import unittest
 import urllib.error
 from unittest.mock import patch
 
+from PIL import Image
+from pydantic import ValidationError
+
 from director import DirectorRequest, PromptDirector, StoryBeat
 
 
+def frame():
+    image = Image.new('RGB', (1024, 1024), 'red')
+    image.paste('blue', (512, 0, 1024, 1024))
+    buffer = io.BytesIO()
+    image.save(buffer, format='PNG')
+    return 'data:image/png;base64,' + base64.b64encode(buffer.getvalue()).decode()
+
+
+def response(body):
+    stream = io.BytesIO(json.dumps(body).encode())
+    return stream
+
+
 class DirectorTests(unittest.TestCase):
-    def request(self):
-        return DirectorRequest(initial_prompt='An ancient forest of moss and ferns',
-                               history=[StoryBeat(prompt=f'forest scene {i}', story=f'beat {i}') for i in range(6)],
-                               step=7)
+    def request(self, **overrides):
+        values = dict(image=frame(), center=(0.25, 0.5),
+                      initial_prompt='An ancient forest of moss and ferns',
+                      history=[StoryBeat(prompt=f'forest scene {i}', story=f'beat {i}') for i in range(6)],
+                      step=7)
+        values.update(overrides)
+        return DirectorRequest(**values)
+
+    def mock_ollama(self, send, beats=None):
+        bodies = iter(beats or [{'observations': 'A red surface fills the crop.',
+                                'story': 'A fine amber grain glints on the red surface.',
+                                'prompt': 'Fine amber grains glint across a crimson surface in warm light.'}])
+        calls = []
+        def reply(req, **kwargs):
+            if req.full_url.endswith('/api/show'):
+                return response({'capabilities': ['completion', 'vision']})
+            calls.append(json.loads(req.data))
+            beat = next(bodies)
+            return response({'done': True, 'done_reason': 'stop',
+                             'message': {'content': json.dumps(beat)}})
+        send.side_effect = reply
+        return calls
 
     @patch('director.urllib.request.urlopen')
-    def test_local_structured_prompt_has_anchor_and_bounded_history(self, send):
-        send.return_value.__enter__.return_value = io.BytesIO(json.dumps({
-            'done': True, 'done_reason': 'stop',
-            'message': {'content': json.dumps({'story': 'A vein of amber lights the roots.',
-                                               'prompt': 'Golden amber veins thread through mossy roots.'})}
-        }).encode())
+    def test_local_structured_prompt_has_image_anchor_and_bounded_history(self, send):
+        calls = self.mock_ollama(send)
         out = PromptDirector().next(self.request())
-        http_request = send.call_args.args[0]
-        self.assertEqual(http_request.full_url, 'http://127.0.0.1:11434/api/chat')
-        payload = json.loads(http_request.data)
+        payload = calls[0]
         context = json.loads(payload['messages'][1]['content'])
         self.assertEqual(context['starting_direction'], self.request().initial_prompt)
         self.assertEqual(context['recent_discoveries_do_not_repeat'], ['beat 3', 'beat 4', 'beat 5'])
         self.assertEqual(context['current_discovery'], 'beat 5')
-        self.assertTrue(context['creative_cue'])
         self.assertFalse(payload['think'])
         self.assertFalse(payload['stream'])
-        self.assertEqual(payload['format']['required'], ['story', 'prompt'])
-        self.assertEqual(payload['options']['temperature'], 0.85)
-        self.assertEqual(out['step'], 7)
-        self.assertIn('amber', out['prompt'])
+        self.assertEqual(payload['format']['required'], ['observations', 'story', 'prompt'])
+        crop = Image.open(io.BytesIO(base64.b64decode(payload['messages'][1]['images'][0])))
+        self.assertEqual(crop.size, (512, 512))
+        self.assertEqual(crop.getpixel((256, 256)), (255, 0, 0))
+        self.assertEqual(out['observations'], 'A red surface fills the crop.')
 
     @patch('director.urllib.request.urlopen')
-    def test_repeated_scene_retries_then_uses_new_scene(self, send):
-        old = {'story': 'beat 5', 'prompt': 'forest scene 5'}
-        new = {'story': 'An amber bridge shelters miniature gardens.',
-               'prompt': 'A translucent amber bridge arches over tiny terraced gardens among jade leaves.'}
-        send.return_value.__enter__.side_effect = [
-            io.BytesIO(json.dumps({'done': True, 'message': {'content': json.dumps(beat)}}).encode())
-            for beat in (old, new)
-        ]
+    def test_changing_click_changes_pixels_given_to_model(self, send):
+        beat = {'observations': 'A colored surface.', 'story': 'A delicate texture.', 'prompt': 'Fine surface texture.'}
+        calls = self.mock_ollama(send, [beat, beat])
+        director = PromptDirector()
+        director.next(self.request(center=(0.25, 0.5), history=[]))
+        director.next(self.request(center=(0.75, 0.5), history=[]))
+        crops = [Image.open(io.BytesIO(base64.b64decode(c['messages'][1]['images'][0]))) for c in calls]
+        self.assertEqual(crops[0].getpixel((0, 0)), (255, 0, 0))
+        self.assertEqual(crops[1].getpixel((0, 0)), (0, 0, 255))
+        # Verify diffusion receives exactly the same unsharpened source pixels.
+        import app
+        import numpy as np
+        for center, crop in zip([(0.25, 0.5), (0.75, 0.5)], crops):
+            with patch.object(app.generator, 'generate', return_value=(crop, {})) as generate:
+                app.zoom(app.Request(image=frame(), center=center, prompt='test'))
+                np.testing.assert_array_equal(np.asarray(generate.call_args.args[0]), np.asarray(crop))
+
+    @patch('director.urllib.request.urlopen')
+    def test_repeated_scene_retries_with_same_image(self, send):
+        old = {'observations': 'A red surface.', 'story': 'beat 5', 'prompt': 'forest scene 5'}
+        new = {'observations': 'A red surface.', 'story': 'Amber flecks glint in the red paint.',
+               'prompt': 'A crimson painted surface with fine amber flecks and subtle hairline cracks.'}
+        calls = self.mock_ollama(send, [old, new])
         out = PromptDirector().next(self.request())
         self.assertEqual(out['story'], new['story'])
-        self.assertEqual(send.call_count, 2)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0]['messages'][1]['images'], calls[1]['messages'][1]['images'])
+
+    @patch('director.urllib.request.urlopen')
+    def test_text_only_model_is_rejected_instead_of_ignoring_image(self, send):
+        send.return_value = response({'capabilities': ['completion']})
+        with self.assertRaisesRegex(RuntimeError, 'cannot read images'):
+            PromptDirector().next(self.request())
+
+    @patch('director.urllib.request.urlopen')
+    def test_invalid_image_is_rejected_before_model_call(self, send):
+        with self.assertRaisesRegex(ValueError, 'Invalid input image'):
+            PromptDirector().next(self.request(image='bad image'))
+        send.assert_not_called()
+
+    def test_invalid_coordinates_are_rejected(self):
+        for center in [(-0.1, 0.5), (1.1, 0.5), (float('nan'), 0.5), (0.5, float('inf'))]:
+            with self.subTest(center=center), self.assertRaises(ValidationError):
+                self.request(center=center)
 
     @patch('director.urllib.request.urlopen', side_effect=urllib.error.URLError('refused'))
     def test_connection_failure_is_actionable(self, _):
@@ -65,10 +127,10 @@ class DirectorTests(unittest.TestCase):
         for body in [
             {'done': True, 'done_reason': 'length', 'message': {'content': '{}'}},
             {'done': True, 'message': {'content': '{"prompt": "only a prompt"}'}},
-            {'done': True, 'message': {'content': '{"prompt":" ","story":" "}'}},
+            {'done': True, 'message': {'content': '{"observations":" ","prompt":" ","story":" "}'}},
         ]:
             with self.subTest(body=body):
-                send.return_value.__enter__.return_value = io.BytesIO(json.dumps(body).encode())
+                send.side_effect = lambda req, **kw: response({'capabilities': ['vision']} if req.full_url.endswith('/api/show') else body)
                 with self.assertRaisesRegex(RuntimeError, 'incomplete scene'):
                     PromptDirector().next(self.request())
 

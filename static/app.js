@@ -6,6 +6,7 @@ function resetStory() {
   storyHistory = []; storyStep = 0;
   $('storyHeading').textContent = 'Story starts with your next zoom.';
   $('storyBeat').textContent = ''; $('usedPrompt').textContent = '';
+  $('cropObservation').textContent = '';
   $('promptDetails').open = false;
 }
 const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
@@ -70,10 +71,11 @@ async function generate() {
   try {
     if ($('evolvePrompt').checked && payload.backend !== 'upscale') {
       if (!payload.prompt.trim()) throw new Error('Enter a starting prompt or choose a preset.');
-      $('status').textContent = 'Writing the next scene locally…';
+      $('status').textContent = 'Reading the selected crop and writing the next scene…';
       const directorResponse = await fetch('/api/director', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({initial_prompt: payload.prompt, history: storyHistory.slice(-3),
+        body: JSON.stringify({image: payload.image, center: payload.center,
+          initial_prompt: payload.prompt, history: storyHistory.slice(-3),
           step: storyStep + 1, variation: $('variation').value})
       });
       const directed = await directorResponse.json();
@@ -102,6 +104,7 @@ async function generate() {
       $('storyBeat').textContent = '';
     }
     $('usedPrompt').textContent = payload.prompt;
+    $('cropObservation').textContent = nextBeat ? `Visible in selected crop: ${nextBeat.observations}` : '';
     $('promptDetails').open = false;
     $('status').textContent = `${data.denoising_steps} denoising steps from t=${data.start_timestep ?? "—"} · inference ${data.inference_seconds.toFixed(2)}s · load ${data.load_seconds.toFixed(2)}s · total ${data.seconds.toFixed(2)}s`;
   } catch(e) { $('status').textContent = e.message; }

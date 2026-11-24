@@ -7,13 +7,12 @@ from pathlib import Path
 
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field, model_validator
 from typing import Literal, Tuple
 
 from director import DirectorRequest, PromptDirector
 from generator import Generator
-from imaging import context_at, insert_center, raw_center, zoom_center, feather_patch
+from imaging import decode_zoom_context, insert_center, raw_center, zoom_center, feather_patch
 
 ROOT = Path(__file__).resolve().parent
 generator = Generator()
@@ -47,15 +46,8 @@ def zoom(req: Request):
     if not model_lock.acquire(blocking=False):
         raise ValueError('A generation is already running')
     try:
-        try:
-            data = base64.b64decode(req.image.split(',')[-1], validate=True)
-            with Image.open(io.BytesIO(data)) as source:
-                if source.size != (1024,1024):
-                    raise ValueError('Expected a 1024 × 1024 input image')
-                context = context_at(source.convert('RGB'), req.center)
-                baseline = context.crop((256,256,768,768))
-        except (ValueError, OSError, UnidentifiedImageError) as exc:
-            raise ValueError('Invalid input image') from exc
+        context = decode_zoom_context(req.image, req.center)
+        baseline = context.crop((256, 256, 768, 768))
         start = time.perf_counter()
         try:
             raw, timing = generator.generate(baseline, req.prompt, req.refinement_steps, req.seed, req.backend, req.sharpen)

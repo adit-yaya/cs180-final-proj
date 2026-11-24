@@ -26,7 +26,8 @@ virtual environment exists. Model weights download on first use into the normal
 Hugging Face cache; GPU selection is automatic (MPS on Apple Silicon).
 
 Upload an image; click a point to generate. With **Evolve prompt each zoom**
-enabled, local Qwen3-4B writes a new prompt and short story beat before diffusion.
+enabled, local Qwen3-VL-4B inspects the clicked crop and writes a new prompt and short
+story beat before diffusion.
 The starting prompt remains the anchor; the browser retains the last three text
 beats. No image history or generated-image disk output is kept. The diffusion
 seed stays fixed until edited. Lanczos only skips both prompt writing and diffusion. SD-Turbo downloads on its first diffusion request and stays in memory.
@@ -40,28 +41,40 @@ Ollama must be installed and running (`ollama serve` if needed). Pull the small
 local model once:
 
 ```sh
-ollama pull qwen3:4b
+ollama pull qwen3-vl:4b-instruct
 ```
 
 `./run.sh` starts the local Ollama service if necessary. Qwen runs on
 `http://127.0.0.1:11434`; no cloud model or API key is used. Set
 `ZOOM_PROMPT_MODEL` before launch to choose another installed Ollama model that
-supports structured output and non-thinking generation.
+supports vision, structured output and non-thinking generation. Text-only models
+are rejected explicitly; there is no silent text-only fallback.
 
 - **Starting prompt / story direction** stays constant until you edit it.
 - **Story variation** defaults to Medium; Gentle changes less, Surprising permits
-  larger departures. A sampled creative cue encourages a distinct discovery.
-- Each step supplies the initial direction, current discovery and last three
-  discoveries. Thinking is off, token sampling uses the selected temperature, and output is limited to
-  a short story sentence plus a standalone diffusion prompt. Near-duplicate scenes
+  larger departures. The current crop takes priority over the initial theme and
+  previous story; creative cues are optional and must fit the visible content.
+- Each step sends the current 1024px frame and click coordinates to the backend.
+  The backend extracts the same unsharpened 512px patch used by diffusion and
+  supplies its lossless PNG to Qwen through Ollama's image input. It also supplies
+  the initial direction and last three discoveries. The image is inspected again
+  for every click, so moving to a new subject can override the earlier story.
+- Qwen first writes factual crop observations (10-15 words), then a short story
+  sentence (10-15 words) and a standalone diffusion prompt (30-40 words). These are
+  prompt-level length targets, not hard truncation rules. Thinking is off; token
+  sampling uses the selected temperature. Near-duplicate scenes
   trigger one retry; invalid or unavailable results stop the step with an error.
 - Story context advances only after the resulting image succeeds. Uploading a
   new image, editing the starting prompt, or pressing **Restart story** resets it.
   Restarting the story keeps the current image. Disabling evolution uses the exact
   fixed prompt for controlled comparisons.
 - The story panel shows the latest discovery and actual prompt used. The prompt
-  dropdown starts collapsed and closes after each successful step or story reset. The prompt writer receives text only and does not see the image or
-  clicked location; continuity is guided by text context rather than visual analysis.
+  dropdown starts collapsed and closes after each successful step or story reset.
+  It includes the visible crop observations for checking what guided the prompt.
+
+Image grounding improves prompt relevance, but does not guarantee object preservation
+by diffusion. Refinement strength still controls how far the generated image may
+change. Ollama 0.12.7 or newer is required for Qwen3-VL.
 
 Prompt writing adds latency before diffusion. Its sampling is randomized independently
 of the diffusion seed, so different prompts can produce different images even with a

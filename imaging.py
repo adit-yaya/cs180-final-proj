@@ -1,6 +1,23 @@
 """Fixed zoom geometry and border-only feathering."""
+import base64
+import io
+
 import numpy as np
 from PIL import Image, ImageFilter
+
+
+def decode_zoom_context(encoded_image, center):
+    """Decode one working frame and extract the shared click-centered context."""
+    if len(center) != 2 or not all(0 <= value <= 1 for value in center):
+        raise ValueError('Center must lie inside the image')
+    try:
+        data = base64.b64decode(encoded_image.split(',')[-1], validate=True)
+        with Image.open(io.BytesIO(data)) as source:
+            if source.size != (1024, 1024):
+                raise ValueError('Expected a 1024 × 1024 input image')
+            return context_at(source.convert('RGB'), center)
+    except (ValueError, OSError) as exc:
+        raise ValueError('Invalid input image; expected a 1024 × 1024 frame') from exc
 
 
 def context_at(image, center):
