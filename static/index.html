@@ -2,46 +2,93 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Generative zoom</title>
-<style>
-*{box-sizing:border-box}body{margin:32px auto;padding:0 20px;max-width:960px;background:#17191c;color:#e6e7e9;font:15px system-ui}h1{font-size:24px;margin-bottom:8px}p{color:#aeb4bd;line-height:1.5}.layout{display:flex;gap:24px;align-items:flex-start}canvas{width:100%;max-width:512px;background:#24282e;cursor:crosshair;touch-action:none}main{width:512px;max-width:100%}aside{flex:1;min-width:230px}label{display:block;margin:12px 0}input,select,textarea,button{font:inherit}textarea,select{width:100%;padding:8px;background:#252a31;color:inherit;border:1px solid #454d58;border-radius:4px}input[type=number]{width:78px;margin-left:8px}input[type=range]{width:100%}button{padding:9px 16px;margin:8px 5px 0 0;cursor:pointer}button:disabled{cursor:wait;opacity:.5}#status{min-height:44px;white-space:pre-wrap}small{color:#aeb4bd}#compare{margin-top:12px} @media(max-width:760px){.layout{display:block}aside{max-width:512px}}
-</style>
+<meta name="color-scheme" content="dark">
+<title>Generative Zoom</title>
+<link rel="stylesheet" href="static/style.css">
 </head>
 <body>
-<h1>Generative zoom</h1>
-<p>Load an image. Click a point to zoom in and refine the selected region.</p>
-<div class="layout"><main>
-<canvas id="canvas" width="1024" height="1024" aria-label="Image and selected zoom region"></canvas>
-<div id="compare"><label>View <select id="view"><option value="image">Blended result (next zoom starts here)</option><option value="raw">Raw generation</option><option value="baseline">Lanczos crop baseline</option></select></label></div>
-<p id="status" role="status">Load an image to begin. Images are center-cropped to a square.</p>
-</main><aside>
-<label>Starting image <input id="upload" type="file" accept="image/*"></label>
-<label>Prompt starting point <select id="preset"><option value="">Custom</option><option value="natural">Living ecosystem</option><option value="architecture">Nested architecture</option><option value="surreal">World within a world</option><option value="material">Material microstructure</option></select></label>
-<label>Starting artistic direction<textarea id="prompt" rows="4">An intricate living ecosystem, branching moss, tiny fern fronds, mineral grains and water droplets, irregular organic structures at many scales, crisp detail throughout, natural diffuse light</textarea></label>
-<label><input id="evolvePrompt" type="checkbox" checked> Evolve prompt each zoom</label>
-<label>Detail variation <select id="variation"><option value="gentle">Gentle</option><option value="medium" selected>Medium</option><option value="surprising">Surprising</option></select></label>
-<button id="resetDetails" type="button">Reset detail panel</button>
-<div id="detailPanel" aria-live="polite" style="margin:12px 0;padding:12px;border:1px solid #454d58;border-radius:4px">
-<small id="detailHeading">Detail direction appears after your next zoom.</small>
-<p id="detailDirection" style="margin:8px 0"></p>
-<details id="promptDetails"><summary>Prompt used for the last image</summary><p id="cropObservation" style="overflow-wrap:anywhere;margin:8px 0"></p><p id="usedPrompt" style="overflow-wrap:anywhere;margin:8px 0"></p></details>
+<header class="page-header">
+  <h1>Generative Zoom</h1>
+  <button id="openImage" class="primary" type="button">Open image</button>
+  <input id="upload" hidden type="file" accept="image/*">
+</header>
+<div class="layout">
+  <main aria-label="Image workspace">
+    <div class="view-bar">
+      <div class="navigation">
+        <button id="back" type="button" disabled>Back one zoom</button>
+        <button id="resetView" type="button" disabled>Original image</button>
+      </div>
+      <output id="zoomScale" aria-label="Magnification">1×</output>
+    </div>
+    <div id="stage" class="stage">
+      <canvas id="canvas" width="1024" height="1024" tabindex="0"
+              aria-label="Zoomable image" aria-describedby="canvasHelp"></canvas>
+      <div id="emptyView" class="empty-view">Drop an image here</div>
+      <div id="cropGuide" class="crop-guide" hidden></div>
+      <div id="clickGuide" class="click-guide" hidden></div>
+    </div>
+    <div class="info-bar">
+      <div>
+        <p id="status" role="status">Open or drop an image to start.</p>
+        <p id="timings" class="timings"></p>
+      </div>
+      <label class="compare">View
+        <select id="view" disabled>
+          <option value="image">Blended result</option>
+          <option value="raw">Raw generation</option>
+          <option value="baseline">Lanczos baseline</option>
+        </select>
+      </label>
+    </div>
+    <p id="canvasHelp" class="hint">Tap or click to zoom. <span>With the image focused, use arrow keys to aim and Enter to zoom. Backspace goes back.</span></p>
+  </main>
+  <aside aria-label="Zoom settings">
+    <section class="panel">
+      <h2>Zoom settings</h2>
+      <p id="warmupStatus" class="notice" role="status" hidden></p>
+      <label>Backend
+        <select id="backend">
+          <option value="diffusion">SD-Turbo</option>
+          <option id="openvinoBackend" value="openvino" hidden>SD-Turbo · OpenVINO</option>
+          <option value="z-image">Z-Image-Turbo · 1024×1024</option>
+          <option value="upscale">Lanczos only</option>
+        </select>
+      </label>
+      <div class="paired">
+        <label>Zoom per click <select id="zoomFactor"><option value="2" selected>2×</option><option value="4">4×</option></select></label>
+        <label>Refinement steps <select id="refinementSteps"><option value="1" selected>1 step</option></select></label>
+      </div>
+      <label class="check"><input id="preserveStructure" type="checkbox" checked> Preserve source structure</label>
+    </section>
+    <section class="panel">
+      <h2>Artistic direction</h2>
+      <label>Preset <select id="preset"><option value="">Choose a preset</option><option value="natural">Living ecosystem</option><option value="architecture">Nested architecture</option><option value="surreal">World within a world</option><option value="material">Material microstructure</option></select></label>
+      <label>Prompt hint (optional)<textarea id="prompt" rows="3" maxlength="2000" placeholder="Describe the selected area or suggest a style"></textarea></label>
+      <label>Prompt mode
+        <select id="promptMode">
+          <option value="crop">Crop / manual prompt</option>
+          <option id="backgroundOption" value="background" hidden>Background Qwen</option>
+          <option value="wait" selected>Wait for Qwen</option>
+        </select>
+      </label>
+      <p id="promptStatus" class="hint" role="status" hidden></p>
+      <label id="variationRow">Detail variation <select id="variation"><option value="gentle">Gentle</option><option value="medium" selected>Medium</option><option value="surprising">Surprising</option></select></label>
+      <details id="promptDetails" hidden>
+        <summary id="promptSummary">Prompt used for the last image</summary>
+        <p id="detailHeading" class="detail-heading"></p>
+        <p id="detailDirection"></p>
+        <p id="cropObservation"></p>
+        <p id="usedPrompt"></p>
+      </details>
+    </section>
+    <details class="panel advanced">
+      <summary>Advanced settings</summary>
+      <label>Pre-noise sharpening <input id="sharpen" type="number" min="0" max="3" step="any" value="0" required></label>
+      <label>Border feather (px at 512px) <input id="feather" type="number" min="0" max="128" value="32" required></label>
+      <label>Seed <input id="seed" type="number" min="0" max="2147483647" value="42" required></label>
+    </details>
+  </aside>
 </div>
-<label>Backend <select id="backend"><option value="diffusion">Diffusion · SD-Turbo</option><option value="z-image">Z-Image-Turbo · 1024×1024</option><option value="upscale">Lanczos only · no generation</option></select></label>
-<label>Zoom per click <select id="zoomFactor"><option value="2" selected>2×</option><option value="4">4×</option></select></label>
-<label>Refinement steps
-<select id="refinementSteps">
-<option value="1">1 step</option>
-<option value="2">2 steps</option>
-<option value="3" selected>3 steps</option>
-<option value="4">4 steps</option>
-</select>
-</label>
-<label>Pre-noise sharpening <input id="sharpen" type="number" min="0" max="3" step="0.25" value="1.5"></label>
-<small>Unsharp mask before editing. Set 0 to disable; strong sharpening can create halos.</small>
-<label>Border width (px at 512px scale) <input id="feather" type="number" min="0" max="128" value="32"></label>
-<small>Only the border blends. The generated interior stays unchanged. Set 0 for a hard paste.</small>
-<label>Seed <input id="seed" type="number" min="0" max="2147483647" value="42"></label>
-
-</aside></div>
-<script src="static/app.js"></script>
+<script type="module" src="static/app.js"></script>
 </body></html>

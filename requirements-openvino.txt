@@ -1,0 +1,5 @@
+-r requirements.txt
+openvino-genai>=2026.4.1,<2027
+huggingface-hub>=0.34,<1
+hf_xet>=1.0
+transformers>=4.57,<5

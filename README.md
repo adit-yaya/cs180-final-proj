@@ -4,8 +4,8 @@
 
 1. Open [Google Colab](https://colab.research.google.com/), choose **File → Upload notebook**, and select [Generative_Zoom.ipynb](Generative_Zoom.ipynb) from this project. The notebook includes the Python app, browser UI, and dependency files. You can share just the notebook with a partner.
 2. Choose **Runtime → Change runtime type**, select a GPU (start with a T4), save, and connect. Choose **Runtime → Run all**. The setup cell prints the assigned GPU, installs the dependencies, and the final code cell displays the demo.
-3. Upload a photo in the demo, enter a starting direction or choose a preset, and leave **Evolve prompt each zoom** enabled. In **Backend**, choose **Diffusion · SD-Turbo** for a T4 or **Z-Image-Turbo · 1024×1024** on an L4, A100, or another GPU with native BF16 support and enough VRAM. Click a detail in the image. The first click downloads and loads the selected models. Later clicks reuse them.
-4. Click the result to continue. The detail panel shows the latest refinement, and **Prompt used for the last image** shows what Qwen sent to diffusion. Use **Reset detail panel** to clear the panel while keeping the current image.
+3. Upload a photo and click a detail with **Wait for Qwen** selected under **Prompt mode**. The prompt hint is optional. In **Backend**, choose **SD-Turbo** for a T4 or **Z-Image-Turbo · 1024×1024** on an L4, A100, or another GPU with native BF16 support and enough VRAM. The first click downloads and loads the selected models. Later clicks reuse them.
+4. Click the result to continue. Open **Prompt used for the last image** to see what Qwen sent to diffusion. **Back one zoom** restores the previous frame, and **Original image** restarts the exploration.
 5. Keep the runtime connected while using the demo. When finished, choose **Runtime → Disconnect and delete runtime** to release the GPU. A fresh runtime downloads the weights again.
 
 Colab runs Qwen3-VL-4B through Transformers with 4-bit weights and runs diffusion on the same GPU. Both models download directly from Hugging Face. The hosted demo uses Colab's built-in port proxy. For a quick UI check, select **Lanczos only** and click the image. If a larger image model exhausts GPU memory, rerun **Start the demo** and select SD-Turbo. To see server output, run `print(log.read_text()[-4000:])` in a new cell.
@@ -13,6 +13,34 @@ Colab runs Qwen3-VL-4B through Transformers with 4-bit weights and runs diffusio
 After editing the app, static assets, or requirements, run `python3 scripts/refresh_colab.py` and include the updated notebook when sharing your changes.
 
 ## Run locally
+
+### Interactive OpenVINO mode on Windows
+
+With Python set up, install the optional runtime once, then launch the app:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-openvino.txt
+.\.venv\Scripts\python.exe app.py --realtime --warmup
+```
+
+The first warm-up downloads SD-Turbo's OpenVINO files into the ignored
+`data/openvino` directory and prepares the local model. Later starts reuse
+the downloaded and compiled files. Warm-up runs one draft locally to initialize
+the rendering kernels before the first generated click. Open http://127.0.0.1:8000
+as soon as the server prints the URL. You can open an image and use Lanczos
+while the model prepares. The browser selects **SD-Turbo · OpenVINO** and starts each
+click with a short zoom animation. It then blends in the generated image as
+soon as it arrives. By default, the image model uses the crop and any prompt
+hint you enter. Choose **Background Qwen** to add visual prompting without
+making a click wait for it.
+
+OpenVINO uses an available Intel GPU by default, including integrated graphics,
+and falls back to CPU if GPU compilation fails. Set `ZOOM_OPENVINO_DEVICE=CPU`
+to use the CPU explicitly. The status line reports the active device and
+click-to-result time. The model renders at 384×384 and the app aligns the result
+with the 1024×1024 source crop.
+
+### PyTorch mode
 
 From the project directory on a Mac with the local environment installed, run:
 
@@ -35,11 +63,35 @@ The launcher prefers `.venv/bin/python`, falling back to `python3` if no local
 virtual environment exists. Model weights download on first use into the normal
 Hugging Face cache; GPU selection is automatic (MPS on Apple Silicon).
 
-Upload an image; click a point to generate. With **Evolve prompt each zoom**
-enabled, local Qwen3-VL-4B inspects the clicked crop and writes a new prompt and short
-detail direction before diffusion.
-The starting prompt remains the style anchor. No image history or generated-image disk output is kept. The diffusion
-seed stays fixed until edited. Lanczos only skips both prompt writing and diffusion. SD-Turbo downloads on its first diffusion request and stays in memory.
+On Windows with the project environment set up and Ollama running:
+
+```powershell
+.\.venv\Scripts\python.exe app.py --warmup
+```
+
+`--warmup` prepares the default diffusion model in the background. Qwen loads
+when requested. Omit `--warmup` to load the image model on demand as well.
+The app checks the existing Hugging Face cache first and downloads missing model
+files as needed. Ollama stores its weights separately. After the first download,
+both reuse the files on disk, although a fresh process still has to load them
+into memory. Set `HF_HUB_OFFLINE=1` before launch for a cache-only diffusion run.
+On CPU, set `ZOOM_CPU_THREADS` to override PyTorch's default thread count.
+
+Open or drop an image, then click a point to generate. The outline previews
+the exact crop. With the image focused, arrow keys move the target, Enter
+zooms, and Backspace returns to the previous frame and restores the same target.
+Change the settings and press Enter to compare another result on the exact crop.
+The app keeps the six most recent frames in this browser tab, plus the original.
+
+Choose a **Prompt mode** after opening an image.
+
+- **Crop / manual prompt** uses the selected crop and your optional text. This is the local default.
+- **Background Qwen** prepares a prompt when you pause over a target or click. A click renders immediately with any relevant prompt that's already ready. The app can reuse a prompt near its original target for up to two further 2× doublings. Moving outside that area, zooming past that scale, or changing the prompt settings makes the next eligible target request fresh analysis. The mode is available with local Ollama.
+- **Wait for Qwen** reads the exact crop before rendering. Use it to compare the result of fresh visual prompting. This is the Colab default, where both models share one GPU.
+
+A prompt hint can steer the style when it fits the crop. Zoom history stays in the browser tab. The seed controls both Qwen sampling and diffusion and stays fixed until edited.
+Lanczos only skips both prompt writing and diffusion. The active diffusion
+pipeline stays in memory until switching models or stopping the server.
 Direct StableDiffusionImg2ImgPipeline import avoids unrelated Qwen imports.
 ZOOM_MODEL=stabilityai/sdxl-turbo optionally selects the XL pipeline. ZOOM_DEVICE
 can be cpu, mps, or cuda; default auto-detects. GPU speed is not measured here.
@@ -53,57 +105,74 @@ local model once:
 ollama pull qwen3-vl:4b-instruct
 ```
 
+For a lighter CPU prompt model, pull `qwen3-vl:2b-instruct` and set
+`$env:ZOOM_PROMPT_MODEL = "qwen3-vl:2b-instruct"` in PowerShell before launching
+the app. The 4B model remains the default.
+
 `./run.sh` starts the local Ollama service if necessary. Qwen runs on
 `http://127.0.0.1:11434`; no cloud model or API key is used. Set
 `ZOOM_PROMPT_MODEL` before launch to choose another installed Ollama model that
 supports vision, structured output and non-thinking generation. Text-only models
 are rejected explicitly; there is no silent text-only fallback.
 
-- **Starting artistic direction** stays constant until you edit it. Qwen names a
-  visible object or feature and proposes one primary refinement that preserves
-  its identity and the crop's composition.
+- **Prompt hint** starts blank for each image. Qwen names a visible object or
+  feature and proposes one primary refinement that preserves its identity and
+  the crop's composition. Enter a hint if you want to guide the style or detail.
 - **Detail variation** defaults to Medium. Gentle refines a visible feature,
   Medium may reveal one small hidden detail, and Surprising may reveal a more
   intricate structure. A hidden detail or a new path to explore must follow
   from a visible feature, such as a crack, seam, branch, or opening.
-- Each step sends the current frame and click coordinates to the backend. Qwen
-  sees the same unsharpened crop used for image editing, along
-  with the starting direction and selected variation. Previous generated prompts
-  and detail directions are omitted from the model input.
+- Qwen sees one reference image with the unsharpened crop and a small close-up
+  of the clicked feature side by side. It also receives the click position inside the crop,
+  the current zoom factor and depth, the variation, and any prompt hint.
+  Previous generated prompts and detail directions are omitted.
 - Qwen returns factual crop observations, a short detail direction, and the
   standalone prompt sent to diffusion. The detail panel shows the latest
   direction. Open **Prompt used for the last image** to see the exact prompt
   and crop observations.
-- The detail panel updates after a successful edit. Uploading a new image,
-  editing the starting direction, or choosing **Reset detail panel** clears it. Disabling
-  prompt evolution uses the starting prompt for each edit.
+- The detail panel shows Qwen's proposed prompt as soon as it is ready, then
+  keeps the prompt that was used for the frame.
+- If Qwen is off or the prompt request fails, diffusion uses the crop and any
+  manually entered prompt. The detail panel shows the reason for a failed request.
 
 Image grounding improves prompt relevance, but does not guarantee object preservation
 by diffusion. Refinement strength still controls how far the generated image may
 change. Ollama 0.12.7 or newer is required for Qwen3-VL.
 
-Prompt writing adds latency before diffusion. Its sampling is randomized independently
-of the diffusion seed, so different prompts can produce different images even with a
-fixed image seed. Both models share the Mac's memory; SD-Turbo is the tested default. Diffusion uses
+The status line reports model load, inference, and click-to-result times. It
+shows Qwen time in **Wait for Qwen** mode and marks any reused background prompt.
+Ollama and the renderer can run concurrently, so speed depends on whether they
+compete for CPU, graphics, or memory on your machine.
+Both models share the machine's memory. Diffusion uses
 float16 on MPS/CUDA (float32 on CPU), and releases unused Metal allocations after
 each generation to leave room for the local prompt writer.
 
 ## Geometry
 
-The upload is center-cropped and resized to a 1024-square working frame. Each
-click selects a square based on **Zoom per click**. The default **2×** uses half
-the frame's width and height, and **4×** uses one quarter. Near the edges, the crop shifts inward to stay within the frame.
+The browser displays a 1024-square working frame. For uploads at least 1536px
+on both sides, the first zoom uses a 2048-square reference of the original
+image so the crop retains more real source detail. Subsequent zooms work from
+the last generated frame. Each click selects a square based on **Zoom per click**. The default **2×** uses half
+the frame's width and height, and **4×** uses one quarter. Near the edges, the crop
+shifts inward to stay within the frame. The aim follows the selected point into
+the new crop.
 The generator upscales that crop with Lanczos to 512×512 for SD-Turbo or
 1024×1024 for Z-Image-Turbo before sharpening and latent noising. All comparison
 views share the crop, and the blended result becomes the next working frame.
 
-The view starts zooming immediately. During generation it eases toward 85% of
-the crop transition over six seconds. Once the result is available, it finishes
-zooming and blends in the aligned detail over roughly 1.4–2.3 seconds, depending
-on how far the view has moved. Reduced-motion mode shows the completed frame
-directly.
+The view eases into the exact crop in about a quarter of a second. When the
+generation arrives, the aligned result fades in over roughly 160–310
+milliseconds. Reduced-motion mode switches directly to the crop and then to
+the completed frame.
 
-## Border-only blending
+## Structure preservation and feathering
+
+**Preserve source structure** is enabled by default. The displayed image starts
+from the source crop and transfers a bounded amount of new texture, strongest
+near the click. Areas that the model smooths retain more fine source texture.
+Changes to broad color and lighting are attenuated. Toggle it
+off to use the original feathered composite. **Raw generation** always shows
+the unmodified model output at display resolution.
 
 The generated image and Lanczos baseline are aligned at 1024×1024. The border
 width control is measured at 512px scale, so its default value of 32 blends the
@@ -114,14 +183,13 @@ border width w:
     alpha = (1 - cos(pi * t)) / 2
     output = alpha * generated + (1 - alpha) * baseline
 
-The interior comes directly from the resized generation. Width 0 uses the full
-generated image, which is also available in the raw comparison view.
+Width 0 skips feathering. The structure preservation toggle still applies.
 
 ## Prompts and first experiments
 
-Choose a preset to populate the editable starting prompt; it stays the same across steps.
-With evolution enabled, this is context for the prompt director rather than the
-exact prompt sent to diffusion.
+Leave the hint blank to start from the pixels. A preset fills the editable
+hint for the current image. With Qwen enabled, the hint is optional context for
+the prompt director. With Qwen off, the hint goes straight to diffusion.
 Presets are hypotheses to test, not demonstrated improvements. Concrete scene
 content is more useful here than instructions such as "add more detail". A fixed
 prompt encourages its named objects to recur; it cannot describe every semantic
@@ -134,7 +202,7 @@ scale or guarantee coherence.
 - Material microstructure: fissures, crystalline grains, pores and mineral veins;
   generally a more conservative target than new miniature objects.
 
-The default is three refinement steps with seed 42. Compare one, two, and three
+The default is one refinement step with seed 42. Compare one, two, and three
 steps on the same crop with the same prompt and seed. More steps start at a
 higher noise level. Inspect Raw generation to see what the model produced.
 Then compare border widths 0,16,32 with identical generation settings.
@@ -149,17 +217,28 @@ understands the desired scene poorly, accepting greater compute cost.
 
 ```sh
 python -m unittest discover -s tests -v
+node --test tests/prompting.test.mjs
 ```
 
-Tests verify the relative crop and edge bounds, shared crop pixels, and border-only blending. JavaScript syntax is checked. Model generation and browser appearance
-remain unverified here.
+The unit suite covers crop geometry, prompt inputs, image compositing,
+warm-up availability, invalid requests, and recovery after generation errors.
+The optional browser smoke test uses the real OpenVINO backend. Start the app
+with `--realtime --warmup`, then run this from a second terminal with Node.js 22
+and a Chromium browser:
+
+```text
+node tests/browser_smoke.cjs http://127.0.0.1:8000/ CHROMIUM_EXE IMAGE_FILE
+```
+
+For Node 20, pass `--experimental-websocket` before the script name. The test
+reports click-to-result times and checks keyboard zoom, comparison,
+history, mobile layout, and background-prompt timing, reuse, and invalidation.
 
 ## Pre-noise sharpening and noise schedule
 
-The upscaled model input receives Pillow UnsharpMask (radius 1.5px, threshold 3,
-amount 1.5 = 150%) before the pipeline's VAE encoder and latent noising. Amount 0
-bypasses it. Blending still uses the untouched context. This boosts existing edge
-contrast but cannot guarantee that diffusion preserves those edges.
+Pre-noise sharpening is off by default. A nonzero amount applies Pillow
+UnsharpMask (radius 1.5px, threshold 3) before VAE encoding and latent noising.
+Use a small amount when the input needs more edge contrast.
 
 The refinement dropdown selects the last K entries of the model's schedule (four steps for SD-Turbo
 and eight for Z-Image-Turbo). Diffusers adds noise at the first selected timestep and denoises
